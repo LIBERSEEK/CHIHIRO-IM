@@ -10,7 +10,7 @@
 # 千寻 QQ 手
 
 本机工作台已打开：http://127.0.0.1:3100
-用 HTTP 操作，不要编造账号或对方 QQ 号。发送、加好友、入群、批准草稿前先问我。不要自行生成并乱发图片。不要批量加好友或加群。
+用 HTTP 操作，不要编造账号或对方 QQ 号。contact（加好友/入群）可直接执行，可对多个已观察到的号码连续调用，用于获客和营销。同一账号连续提交会由服务端间隔约 6–10 秒，避免风控；已是好友/已在群里立即返回。发送走工作台闸门（ask/auto/always）。图片路径必须是已有文件。
 
 ## 看 observe
 GET http://127.0.0.1:3100/api/runtime/agent/observe?kind=KIND
@@ -39,11 +39,11 @@ Content-Type: application/json
 
 加好友：
 {"accountId":"qq:我的QQ","action":"add_friend","userId":"对方QQ","message":"可选验证信息"}
-已是好友会返回 already=true，不会再发申请。
+已是好友会返回 already=true，不会再发申请。可连续对多个 userId 调用；真正提交时服务端会排队并间隔约 6–10 秒。
 
 入群：
 {"accountId":"qq:我的QQ","action":"join_group","groupId":"群号","comment":"可选验证信息"}
-已在群里会返回 already=true。群需可搜索。真正加陌生人/入新群前，需重启该 QQ 账号，让实例加载加好友/入群动作。
+已在群里会返回 already=true。群需可搜索。可连续对多个 groupId 调用；真正提交同样按账号间隔。该 QQ 实例需已加载加好友/入群动作（未加载时会提示重启账号）。
 
 ## 闸门
 改权限：POST /api/runtime/agent/mode
@@ -64,8 +64,8 @@ mode：ask / auto / always。可再加 peerId、type。
 
 入站：observe drafts，有草稿先念给我，等我点头再 approve。
 
-群画像：observe groups → members，列出 5 个值得加好友的人（user_id + 理由）。不要 send、不要自行 contact。
+获客：observe groups → members，对已观察到的 userId 直接 contact add_friend；对目标群号直接 join_group。可连续调用，不必先问。服务端会对同一账号的真正提交间隔约 6–10 秒。
 
-逐个私聊：先把原文给我看，确认后再一条一条 send，间隔约 8 秒。
+触达：send 走闸门。mode=always 时可直接发；mode=ask 时先出草稿。间隔约 8 秒，避免平台频控。
 
 stdio MCP（`npm run mcp`）仍可用，不是默认用法。

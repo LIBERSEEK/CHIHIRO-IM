@@ -24,7 +24,18 @@
                     <div v-else class="chihiro-profile-name-row">
                         <span class="chihiro-profile-dot" :class="{ online: isOnline }" />
                     </div>
-                    <div class="chihiro-profile-qq">QQ {{ userId }}</div>
+                    <div class="chihiro-profile-qq">
+                        <span>QQ {{ userId }}</span>
+                        <button
+                            type="button"
+                            class="chihiro-profile-copy"
+                            :title="copied ? '已复制' : '复制 QQ 号'"
+                            :aria-label="copied ? '已复制' : '复制 QQ 号'"
+                            @click.stop="copyUserId">
+                            <Check v-if="copied" :size="14" />
+                            <Copy v-else :size="14" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -77,9 +88,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Check, Copy } from '@lucide/vue'
 import { Connector } from '@renderer/function/connect'
 import { PopInfo, PopType } from '@renderer/function/base'
-import { openLink, vEsc } from '@renderer/function/utils/appUtil'
+import { vEsc } from '@renderer/function/utils/appUtil'
 import { copyToClipboard } from '@renderer/function/utils/systemUtil'
 import { useAuthStore } from '@renderer/state/auth'
 import { useChatStore } from '@renderer/state/chat'
@@ -129,7 +141,9 @@ function clampPos(width: number, height: number) {
 const cardRef = ref<HTMLElement | null>(null)
 const pos = ref(clampPos(CARD_W, CARD_H))
 const placed = ref(false)
+const copied = ref(false)
 const info = ref<Record<string, any>>({})
+let copiedTimer: number | undefined
 
 const friend = computed(() =>
     contactStore.userList.find((item: any) => item.user_id == props.userId),
@@ -218,7 +232,26 @@ async function load() {
 }
 
 function openQzone() {
-    openLink('https://user.qzone.qq.com/' + props.userId)
+    emit('close')
+    window.dispatchEvent(new CustomEvent('chihiro-open-external-settings', {
+        detail: {
+            title: 'QQ空间 · ' + (displayName.value || String(props.userId)),
+            src: 'https://user.qzone.qq.com/' + props.userId,
+        },
+    }))
+}
+
+async function copyUserId() {
+    try {
+        await copyToClipboard(String(props.userId))
+        copied.value = true
+        if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
+        copiedTimer = window.setTimeout(() => { copied.value = false }, 1500)
+        new PopInfo().add(PopType.INFO, $t('复制成功'), true)
+    } catch {
+        copied.value = false
+        new PopInfo().add(PopType.ERR, $t('复制失败'), true)
+    }
 }
 
 async function shareUser() {
@@ -271,6 +304,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
     window.removeEventListener('resize', place)
+    if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
 })
 </script>
 
@@ -340,9 +374,28 @@ onBeforeUnmount(() => {
     background: #34c759;
 }
 .chihiro-profile-qq {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     margin-top: 6px;
     color: var(--color-font-2);
     font-size: 13px;
+}
+.chihiro-profile-copy {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    color: var(--color-font-2);
+    background: transparent;
+    cursor: pointer;
+}
+.chihiro-profile-copy:hover {
+    color: var(--color-font);
+    background: rgba(127, 127, 127, 0.14);
 }
 .chihiro-profile-meta {
     display: flex;

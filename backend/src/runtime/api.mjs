@@ -6,6 +6,7 @@ import { createQqRuntime } from './qq-napcat.mjs'
 import { createAstrbotRuntime } from './astrbot.mjs'
 import { createBotController } from './bot.mjs'
 import { createBotSuggest } from './bot-suggest.mjs'
+import { createBotAuto } from './bot-auto.mjs'
 import { createAgentController } from './agent.mjs'
 import { createChatuiProxy } from './chatui.mjs'
 import { createCustomerInsights } from '../core/customer-insights.mjs'
@@ -26,6 +27,16 @@ export function createRuntime({ root, cfg, services = {} }) {
   const groupIntelligence = services.groupIntelligence || createGroupIntelligence({ root })
   const bot = services.bot || createBotController({ store, qq, astrbot, cfg })
   const botSuggest = services.botSuggest || createBotSuggest({ store, qq, astrbot })
+  const botAuto = services.botAuto || createBotAuto({
+    store,
+    qq,
+    botSuggest,
+    sendToPeer: (accountId, body) => agent.sendToPeer(accountId, body),
+    fetchHistory: async (accountId, type, peerId) => {
+      const observed = await agent.observe({ kind: 'messages', accountId, type, peerId, count: 24 })
+      return observed.messages || []
+    },
+  })
   const chatui = services.chatui || createChatuiProxy({ astrbot })
 
   async function snapshot() {
@@ -241,11 +252,42 @@ export function createRuntime({ root, cfg, services = {} }) {
           mode: body.mode,
           configId: body.configId ?? body.config_id,
         })
+        botAuto.sync()
         return json(res, await snapshot())
       } catch (e) {
         logError('api', 'bot.session', e)
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
+    }
+
+    if (p === '/api/runtime/bot/presence' && method === 'POST') {
+      const body = await readJson(req)
+      return json(res, botAuto.notePresence({
+        accountId: body.accountId || body.id,
+        type: body.type,
+        peerId: body.peerId,
+        focused: body.focused,
+        busy: body.busy,
+      }))
+    }
+
+    if (p === '/api/runtime/bot/claim' && method === 'POST') {
+      const body = await readJson(req)
+      return json(res, botAuto.claim({
+        accountId: body.accountId || body.id,
+        type: body.type,
+        peerId: body.peerId,
+        lastMessageId: body.lastMessageId,
+      }))
+    }
+
+    if (p === '/api/runtime/bot/nudge' && method === 'POST') {
+      const body = await readJson(req)
+      return json(res, botAuto.nudge({
+        accountId: body.accountId || body.id,
+        type: body.type,
+        peerId: body.peerId,
+      }))
     }
 
     if (p === '/api/runtime/bot/suggest' && method === 'POST') {
@@ -350,7 +392,10 @@ export function createRuntime({ root, cfg, services = {} }) {
       const unsub = qq.subscribe(() => { send() })
       const timer = setInterval(() => {
         qq.refreshPorts()
-          .then(() => bot.sync())
+          .then(() => {
+            bot.sync()
+            botAuto.sync()
+          })
           .catch(() => {})
       }, 1500)
       req.on('close', () => {
@@ -364,10 +409,11 @@ export function createRuntime({ root, cfg, services = {} }) {
   }
 
   async function shutdown() {
+    botAuto.shutdown()
     await astrbot.stopIfOwned().catch((e) => logError('api', 'astrbot stop', e))
   }
 
-  return { handle, qq, store, astrbot, bot, botSuggest, agent, customers, groupIntelligence, snapshot, shutdown }
+  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, snapshot, shutdown }
 }
 
 function json(res, obj, status = 200) {

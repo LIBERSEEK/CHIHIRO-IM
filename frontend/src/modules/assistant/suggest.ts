@@ -1,6 +1,19 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { useShellStore } from '@/stores/shell'
+import {
+  decideJoin,
+  quietMsFor,
+  type SuggestTurnMessage,
+} from './suggest-turn'
+
+export {
+  PRIVATE_QUIET_MS,
+  GROUP_QUIET_MS,
+  collectPendingTurn,
+  decideJoin,
+  type SuggestTurnMessage,
+} from './suggest-turn'
 
 export type BotMode = 'assist' | 'auto'
 export type BotSessionConfig = {
@@ -17,7 +30,6 @@ export type SuggestContext = {
 export type AstrBotConfigOption = { id: string; name: string; isDefault?: boolean }
 
 export const AUTO_SEND_MS = 5000
-export const IDLE_MS = 600
 export const BOT_DEFAULT_KEY = 'chihiro-bot-new-default'
 
 export function peerSessionKey(type: SuggestContext['type'], peerId: string): string {
@@ -91,6 +103,8 @@ type SuggestActions = {
   fill: (text: string) => void
   send: (text: string, force?: boolean) => void
   inputText: () => string
+  blocked?: () => boolean
+  snapshot?: () => { lastMessageId: string; messages: SuggestTurnMessage[] } | null
 }
 
 export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
@@ -108,9 +122,12 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   const configsReady = ref(false)
   const setupMissing = ref(false)
   const autoRequested = ref<Set<string>>(new Set())
+  const focused = ref(false)
   let generation = 0
   let controller: AbortController | undefined
   let countdownTimer: ReturnType<typeof setInterval> | undefined
+  let quietTimer: ReturnType<typeof setTimeout> | undefined
+  let presenceTimer: ReturnType<typeof setInterval> | undefined
   let actions: SuggestActions | undefined
 
   const key = computed(() => context.value ? botConversationKey(context.value) : '')
@@ -165,7 +182,27 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     return data
   }
 
+  function operatorBusy() {
+    return Boolean(actions?.blocked?.() || hasSubstantialText(actions?.inputText() || ''))
+  }
+
+  function cancelQuiet() {
+    if (quietTimer !== undefined) {
+      clearTimeout(quietTimer)
+      quietTimer = undefined
+    }
+  }
+
+  function invalidateDraft() {
+    generation += 1
+    controller?.abort()
+    controller = undefined
+    generating.value = false
+    clearChips()
+  }
+
   function discardSurface() {
+    cancelQuiet()
     generation += 1
     controller?.abort()
     controller = undefined
@@ -185,6 +222,38 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     countdownReplyId.value = ''
   }
 
+  async function claimTurn(target: SuggestContext, messageId: string) {
+    try {
+      const result = await request('/api/runtime/bot/claim', {
+        accountId: target.accountId,
+        type: target.type,
+        peerId: target.peerId,
+        lastMessageId: messageId,
+      }) as { claimed?: boolean }
+      return result.claimed !== false
+    } catch {
+      return true
+    }
+  }
+
+  async function finishAutoSend() {
+    const target = context.value
+    const messageId = lastMessageId.value
+    const text = countdownReplyId.value === 'summary'
+      ? summary.value
+      : replies.value.find(item => item.id === countdownReplyId.value)?.text
+    cancelCountdown()
+    if (!target || !text?.trim() || hasSubstantialText(actions?.inputText() || '')) return
+    if (!(await claimTurn(target, messageId))) {
+      clearChips()
+      return
+    }
+    actions?.send(text)
+    replies.value = []
+    summary.value = ''
+    lastMessageId.value = ''
+  }
+
   function maybeStartCountdown() {
     cancelCountdown()
     if (mode.value !== 'auto' || !enabled.value || !replies.value.length) return
@@ -197,20 +266,61 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     countdownTimer = setInterval(() => {
       const left = AUTO_SEND_MS - (Date.now() - started)
       if (left <= 0) {
-        const text = countdownReplyId.value === 'summary'
-          ? summary.value
-          : replies.value.find(item => item.id === countdownReplyId.value)?.text
-        cancelCountdown()
-        if (text && !hasSubstantialText(actions?.inputText() || '')) {
-          actions?.send(text)
-          replies.value = []
-          summary.value = ''
-          lastMessageId.value = ''
-        }
+        void finishAutoSend()
         return
       }
       countdownMs.value = left
     }, 100)
+  }
+
+  function postPresence(target: SuggestContext, nextFocused: boolean) {
+    void request('/api/runtime/bot/presence', {
+      accountId: target.accountId,
+      type: target.type,
+      peerId: target.peerId,
+      focused: nextFocused,
+      busy: nextFocused && operatorBusy(),
+    }).catch(() => {})
+  }
+
+  function postNudge(target: SuggestContext) {
+    if (!enabled.value || mode.value !== 'auto') return
+    void request('/api/runtime/bot/nudge', {
+      accountId: target.accountId,
+      type: target.type,
+      peerId: target.peerId,
+    }).catch(() => {})
+  }
+
+  function stopPresenceHeartbeat() {
+    if (presenceTimer !== undefined) {
+      clearInterval(presenceTimer)
+      presenceTimer = undefined
+    }
+  }
+
+  function startPresenceHeartbeat() {
+    stopPresenceHeartbeat()
+    presenceTimer = setInterval(() => {
+      if (focused.value && context.value) postPresence(context.value, true)
+    }, 8000)
+  }
+
+  function setFocused(next: boolean) {
+    const target = context.value
+    const was = focused.value
+    focused.value = next
+    if (!target) return
+    if (next) {
+      postPresence(target, true)
+      startPresenceHeartbeat()
+      return
+    }
+    stopPresenceHeartbeat()
+    postPresence(target, false)
+    cancelQuiet()
+    cancelCountdown()
+    if (was && enabled.value && mode.value === 'auto') postNudge(target)
   }
 
   function clearChips() {
@@ -232,6 +342,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     }
     sessions.value = { ...sessions.value, [botConversationKey(target)]: next }
     if (!next.enabled) {
+      cancelQuiet()
       generation += 1
       controller?.abort()
       controller = undefined
@@ -271,10 +382,16 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     if (next.accountId !== shell.activeAccountId || !/^\d+$/.test(next.peerId)) return
     const same = context.value && botConversationKey(context.value) === botConversationKey(next)
     if (!same) {
+      const previous = context.value
+      if (previous && focused.value) {
+        postPresence(previous, false)
+        if (enabled.value && mode.value === 'auto') postNudge(previous)
+      }
       discardSurface()
       autoRequested.value = new Set()
       menuOpen.value = false
       context.value = { ...next }
+      if (focused.value) postPresence(next, true)
       void hydrate(next.accountId)
     } else context.value = { ...next }
   }
@@ -294,6 +411,11 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   }
 
   function clear() {
+    const previous = context.value
+    if (previous && focused.value && enabled.value && mode.value === 'auto') postNudge(previous)
+    if (previous) postPresence(previous, false)
+    stopPresenceHeartbeat()
+    focused.value = false
     discardSurface()
     autoRequested.value = new Set()
     context.value = null
@@ -337,6 +459,9 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   function sendReply(reply: SuggestReply) {
     cancelCountdown()
     if (!reply.text.trim()) return
+    const target = context.value
+    const messageId = lastMessageId.value
+    if (target && messageId) void claimTurn(target, messageId)
     actions?.send(reply.text, true)
   }
 
@@ -344,9 +469,34 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     return autoRequested.value.has(messageId)
   }
 
+  function noteThemActivity() {
+    if (!context.value || !enabled.value || operatorBusy()) return
+    cancelCountdown()
+    cancelQuiet()
+    if (generating.value || replies.value.length || summary.value) invalidateDraft()
+    const wait = quietMsFor(context.value.type)
+    quietTimer = setTimeout(() => {
+      quietTimer = undefined
+      void flushQuietTurn()
+    }, wait)
+  }
+
+  async function flushQuietTurn() {
+    if (!context.value || !enabled.value || operatorBusy()) return
+    const snap = actions?.snapshot?.()
+    if (!snap?.lastMessageId) return
+    const decision = decideJoin({ type: context.value.type, messages: snap.messages })
+    if (!decision.join) return
+    await requestSuggest({
+      lastMessageId: snap.lastMessageId,
+      trigger: 'auto',
+      messages: snap.messages,
+    })
+  }
+
   async function requestSuggest(input: {
     lastMessageId: string
-    messages: { role: 'them' | 'me'; text: string }[]
+    messages: SuggestTurnMessage[] | { role: 'them' | 'me'; text: string }[]
     trigger: 'auto' | 'menu'
   }) {
     if (!context.value || !input.lastMessageId) return
@@ -398,6 +548,8 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
 
   function onOperatorInput() {
     cancelCountdown()
+    cancelQuiet()
+    if (focused.value && context.value) postPresence(context.value, true)
   }
 
   watch(() => `${shell.activeAccountId ?? ''}:${shell.activeAccount?.status ?? ''}`, clear, { flush: 'sync' })
@@ -407,6 +559,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     configs, configsReady, needsAstrBotSetup, enabled, mode, configId, selectedConfigLabel, highlightedId, countingDown, composerReply, config,
     bindActions, select, clear, applySnapshot, persist, toggleMenu, closeMenu,
     setEnabled, setMode, setConfigId, pick, sendReply, requestSuggest, alreadyAutoRequested,
-    onOperatorInput, cancelCountdown, clearChips, loadConfigs, discardSurface,
+    onOperatorInput, noteThemActivity, flushQuietTurn, cancelCountdown, clearChips, loadConfigs, discardSurface,
+    setFocused,
   }
 })

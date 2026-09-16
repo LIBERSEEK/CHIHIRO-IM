@@ -83,7 +83,7 @@ function onKeydown(event: KeyboardEvent) {
 <style scoped>
 .external-settings-backdrop {
   position: fixed;
-  z-index: 4000;
+  z-index: 5200;
   inset: 0;
   display: grid;
   place-items: center;

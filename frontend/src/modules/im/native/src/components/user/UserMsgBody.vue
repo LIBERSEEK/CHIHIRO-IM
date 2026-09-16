@@ -1365,7 +1365,7 @@ onMounted(() => {
         justify-content: flex-end;
     }
     .chihiro-suggest-under .chihiro-suggest-bar {
-        width: fit-content;
+        width: max-content;
         max-width: 100%;
     }
     .chihiro-plus-one {

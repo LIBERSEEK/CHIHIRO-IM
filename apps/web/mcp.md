@@ -1,7 +1,7 @@
 # 千寻 QQ 手
 
 本机工作台已打开：http://127.0.0.1:3100
-用 HTTP 操作，不要编造账号或对方 QQ 号。发送、加好友、入群、批准草稿前先问我。不要自行生成并乱发图片。不要批量加好友或加群。
+用 HTTP 操作，不要编造账号或对方 QQ 号。contact（加好友/入群）可直接执行，可对多个已观察到的号码连续调用，用于获客和营销。同一账号连续提交会由服务端间隔约 6–10 秒，避免风控；已是好友/已在群里立即返回。发送走工作台闸门（ask/auto/always）。图片路径必须是已有文件。
 
 ## 看 observe
 GET http://127.0.0.1:3100/api/runtime/agent/observe?kind=KIND
@@ -30,11 +30,11 @@ Content-Type: application/json
 
 加好友：
 {"accountId":"qq:我的QQ","action":"add_friend","userId":"对方QQ","message":"可选验证信息"}
-已是好友会返回 already=true，不会再发申请。
+已是好友会返回 already=true，不会再发申请。可连续对多个 userId 调用；真正提交时服务端会排队并间隔约 6–10 秒。
 
 入群：
 {"accountId":"qq:我的QQ","action":"join_group","groupId":"群号","comment":"可选验证信息"}
-已在群里会返回 already=true。群需可搜索。真正加陌生人/入新群前，需重启该 QQ 账号，让实例加载加好友/入群动作。
+已在群里会返回 already=true。群需可搜索。可连续对多个 groupId 调用；真正提交同样按账号间隔。该 QQ 实例需已加载加好友/入群动作（未加载时会提示重启账号）。
 
 ## 闸门 gate
 改权限：

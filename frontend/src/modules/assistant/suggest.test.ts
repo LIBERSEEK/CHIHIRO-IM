@@ -11,6 +11,7 @@ import {
   highestScoreReply,
   botConversationKey,
   AUTO_SEND_MS,
+  PRIVATE_QUIET_MS,
   type SuggestContext,
 } from './suggest'
 
@@ -46,6 +47,9 @@ beforeEach(() => {
       return reply(sessionSnapshot(body.id)) as Response
     }
     if (url === '/api/runtime/bot/configs') return reply({ configs: [{ id: 'default', name: '默认', isDefault: true }] }) as Response
+    if (url === '/api/runtime/bot/claim') return reply({ claimed: true }) as Response
+    if (url === '/api/runtime/bot/presence') return reply({ ok: true, focused: true }) as Response
+    if (url === '/api/runtime/bot/nudge') return reply({ ok: true, scheduled: true }) as Response
     return reply({ lastMessageId: '', replies: [] }) as Response
   }))
   const shell = useShellStore()
@@ -55,6 +59,7 @@ beforeEach(() => {
 afterEach(() => {
   useSuggestStore().clear()
   vi.useRealTimers()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -225,6 +230,113 @@ it('sends a chip immediately even if the composer already has text', async () =>
   expect(sent).toEqual(['直接发出去'])
 })
 
+function captureQuiet(ms: number) {
+  const origSet = globalThis.setTimeout.bind(globalThis)
+  const origClear = globalThis.clearTimeout.bind(globalThis)
+  const queued: Array<() => void> = []
+  const handle = 4242 as unknown as ReturnType<typeof setTimeout>
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: TimerHandler, delay?: number, ...args: unknown[]) => {
+    if (typeof fn === 'function' && delay === ms) {
+      queued.length = 0
+      queued.push(fn as () => void)
+      return handle
+    }
+    return origSet(fn as TimerHandler, delay, ...args)
+  }) as typeof setTimeout)
+  vi.spyOn(globalThis, 'clearTimeout').mockImplementation((id) => {
+    if (id === handle) {
+      queued.length = 0
+      return
+    }
+    origClear(id)
+  })
+  return queued
+}
+
+function suggestCalls() {
+  return vi.mocked(fetch).mock.calls.filter(call => call[0] === '/api/runtime/bot/suggest')
+}
+
+it('waits for a quiet window before auto-suggesting and resets when more messages arrive', async () => {
+  const store = useSuggestStore()
+  store.bindActions({
+    fill: () => {},
+    send: () => {},
+    inputText: () => '',
+    snapshot: () => ({
+      lastMessageId: 'm2',
+      messages: [
+        { id: 'm1', role: 'them', text: '那个地址', senderId: 'a' },
+        { id: 'm2', role: 'them', text: '你知道吗', senderId: 'a' },
+      ],
+    }),
+  })
+  store.select(a)
+  await flush()
+  await store.setEnabled(true)
+  const quiet = captureQuiet(PRIVATE_QUIET_MS)
+  store.noteThemActivity()
+  expect(quiet).toHaveLength(1)
+  expect(suggestCalls()).toHaveLength(0)
+  store.noteThemActivity()
+  expect(quiet).toHaveLength(1)
+  expect(suggestCalls()).toHaveLength(0)
+  quiet[0]()
+  await flush()
+  expect(suggestCalls().length).toBeGreaterThan(0)
+})
+
+it('does not auto-suggest skipped group filler after the quiet window', async () => {
+  const store = useSuggestStore()
+  store.bindActions({
+    fill: () => {},
+    send: () => {},
+    inputText: () => '',
+    snapshot: () => ({
+      lastMessageId: 'g2',
+      messages: [
+        { id: 'g1', role: 'them', text: '哈哈', senderId: 'a' },
+        { id: 'g2', role: 'them', text: '嗯嗯', senderId: 'b' },
+      ],
+    }),
+  })
+  store.select(group)
+  await flush()
+  await store.setEnabled(true)
+  store.noteThemActivity()
+  expect(suggestCalls()).toHaveLength(0)
+  await store.flushQuietTurn()
+  expect(suggestCalls()).toHaveLength(0)
+})
+
+it('auto-suggests a multi-person group discussion as one turn', async () => {
+  const store = useSuggestStore()
+  store.bindActions({
+    fill: () => {},
+    send: () => {},
+    inputText: () => '',
+    snapshot: () => ({
+      lastMessageId: 'g3',
+      messages: [
+        { id: 'g1', role: 'them', text: '这个报错我这边也有', senderId: 'a', name: 'A' },
+        { id: 'g2', role: 'them', text: '刚更新模型配置之后', senderId: 'b', name: 'B' },
+        { id: 'g3', role: 'them', text: '好像和 token 有关', senderId: 'c', name: 'C' },
+      ],
+    }),
+  })
+  store.select(group)
+  await flush()
+  await store.setEnabled(true)
+  await store.flushQuietTurn()
+  expect(suggestCalls().length).toBeGreaterThan(0)
+  const body = JSON.parse(String(suggestCalls()[0][1]?.body || '{}'))
+  expect(body.messages.map((item: { text: string }) => item.text)).toEqual([
+    '这个报错我这边也有',
+    '刚更新模型配置之后',
+    '好像和 token 有关',
+  ])
+})
+
 it('auto-sends the highest score reply after 5s when the input stays empty', async () => {
   const store = useSuggestStore()
   const sent: string[] = []
@@ -241,6 +353,22 @@ it('auto-sends the highest score reply after 5s when the input stays empty', asy
   await store.requestSuggest({ lastMessageId: 'm3', trigger: 'menu', messages: [{ role: 'them', text: '买吗' }] })
   expect(store.countingDown).toBe(true)
   await vi.advanceTimersByTimeAsync(AUTO_SEND_MS + 50)
+  await Promise.resolve()
+  await Promise.resolve()
   expect(sent).toEqual(['好的，我买'])
   expect(store.replies).toEqual([])
+})
+
+it('releases an auto session to Runtime when the conversation is unfocused', async () => {
+  const store = useSuggestStore()
+  store.select(a)
+  await flush()
+  await store.setEnabled(true)
+  await store.setMode('auto')
+  store.setFocused(true)
+  store.setFocused(false)
+  await flush()
+  const urls = vi.mocked(fetch).mock.calls.map(call => String(call[0]))
+  expect(urls).toContain('/api/runtime/bot/presence')
+  expect(urls).toContain('/api/runtime/bot/nudge')
 })

@@ -1,6 +1,6 @@
 # Chihiro agent guide
 
-This is **千寻 (Chihiro)** — a QQ IM workbench. Product repo: [LiberSeek/CHIHIRO](https://github.com/LiberSeek/CHIHIRO).
+This is **千寻 (Chihiro)** — a QQ IM workbench. Product repo: [LIBERSEEK/CHIHIRO](https://github.com/LIBERSEEK/CHIHIRO).
 
 Read this before changing code. The old Stapxs **overlay** path is gone.
 
@@ -59,7 +59,7 @@ Do not add string-replace overlays. Do not copy upstream files into `apps/`.
 
 ## Git
 
-Origin: `https://github.com/LiberSeek/CHIHIRO.git`
+Origin: `https://github.com/LIBERSEEK/CHIHIRO.git`
 
 | Branch | Purpose |
 |---|---|

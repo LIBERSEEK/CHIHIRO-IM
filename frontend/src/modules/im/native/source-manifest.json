@@ -240,7 +240,7 @@
     {
       "path": "src/components/user/UserComposer.vue",
       "upstreamPath": "components/user/UserComposer.vue",
-      "sha256": "6c45d594c67bfa96763724477104c5649df8c07876928a42c5c02cf2fd7476ef",
+      "sha256": "2e85fcd25c407dd411479de1c3c6bf49361e6c911b8899470e5750553c860c9b",
       "extractedSha256": "5a72399947ada83841f94339b6d2f03fcf576921e53f47ae3f8baa70bfd05268"
     },
     {
@@ -305,7 +305,7 @@
     {
       "path": "src/components/user/UserMsgBody.vue",
       "upstreamPath": "components/user/UserMsgBody.vue",
-      "sha256": "cd7f9d5b6c8fefedf7e89fecadc2168b74b69238e56aea3c03929369e5d35996",
+      "sha256": "facd3c6543a0e61b3eb774c3a7e8bfdfb582ed5e3d4b53e378702cdb764bc1e2",
       "extractedSha256": "52387ba4ff41a58814518999375b8b318c05cb43b3a965fb21edac86ff7b0338"
     },
     {
@@ -321,7 +321,7 @@
     {
       "path": "src/components/user/UserProfilePop.vue",
       "upstreamPath": "components/user/UserProfilePop.vue",
-      "sha256": "591245d56aa088ca99526d867065ebf2bcad66a26d7a8111a9dbd0c2f1ddb858",
+      "sha256": "cad8b245a37f19fb9e0391141b915723fa7e6cb45523bc7e8c2bdc6b5d5948af",
       "extractedSha256": "40520d0c380b22b215ba8ba543b0df82caef031cebc6b4f53801f1ef311e72a5"
     },
     {
@@ -512,7 +512,7 @@
     {
       "path": "src/pages/user/UserChat.vue",
       "upstreamPath": "pages/user/UserChat.vue",
-      "sha256": "594c81db031c5d37a46f8eccd828cb7cdfd6fc93c386be825a69e34000cec9b9",
+      "sha256": "b29daa282a80b23aa49b9515c70d878a7922a645e7d3966ce01406e5ff67c509",
       "extractedSha256": "a4f779b55313f65426613dd5729811ad1388b9b1c684e50651ab3a49695d222b"
     },
     {

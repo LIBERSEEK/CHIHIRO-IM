@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { SlidersHorizontal, Settings } from '@lucide/vue'
 
+import AccountProfilePop from '@/app/AccountProfilePop.vue'
 import ExternalSettingsDialog from '@/app/ExternalSettingsDialog.vue'
 import { useAssistantStore } from '@/modules/assistant/session'
 import { useShellStore } from '@/stores/shell'
@@ -11,6 +12,7 @@ import { applyTheme as applyShellTheme, cycleTheme as cycleShellTheme, onThemeCh
 import { resolveShellViewState } from '@/app/shell-view-state'
 import { startRuntimeStateStream, type RuntimeStateStream } from '@/app/runtime-state-stream'
 import {
+  accountAvatarClickAction,
   accountTitle,
   accountUnreadLabel,
   canCloseExitDialog,
@@ -30,6 +32,7 @@ const router = useRouter()
 const settingsOpen = ref(false)
 const externalSettings = ref<{ title: string; src: string } | null>(null)
 const accountMenu = ref<{ account: AccountContext; x: number; y: number } | null>(null)
+const accountProfile = ref<{ account: AccountContext; anchor: DOMRect } | null>(null)
 const exitAccount = ref<AccountContext | null>(null)
 const addLauncherOpen = ref(false)
 const clientMenuOpen = ref(false)
@@ -56,6 +59,12 @@ const showLoginPanel = computed(() => shellView.value.showLoginPanel)
 const loginMessage = computed(() => shellView.value.loginMessage)
 const showEmptyLauncher = computed(() => shellView.value.showEmptyLauncher)
 const exitBusy = computed(() => Boolean(exitAccount.value && shell.removingAccountId === exitAccount.value.id))
+const profileAccount = computed(() => {
+  const pop = accountProfile.value
+  if (!pop) return null
+  return shell.accounts.find(item => item.id === pop.account.id) ?? pop.account
+})
+const profileAnchor = computed(() => accountProfile.value?.anchor ?? null)
 const selectedClient = computed(() => shell.clients.find(client => client.id === selectedClientId.value)
   ?? shell.clients.find(client => client.enabled)
   ?? shell.clients[0])
@@ -67,14 +76,34 @@ function applyTheme(mode: ThemeMode) {
 function cycleTheme() {
   themeMode.value = cycleShellTheme().mode
 }
+let suppressDocumentClose = false
 function selectAccount(id: AccountId) {
   closeAccountMenu()
   shell.selectAccount(id)
   const current = router.currentRoute.value
   if (current.path !== '/im' || Object.keys(current.query).length > 0) void router.push('/im')
 }
+function onAccountAvatarClick(event: MouseEvent, account: AccountContext) {
+  event.stopPropagation()
+  settingsOpen.value = false
+  closeAccountMenu()
+  const action = accountAvatarClickAction(account.id, shell.activeAccountId, accountProfile.value?.account.id)
+  if (action === 'select') {
+    closeAccountProfile()
+    selectAccount(account.id)
+    return
+  }
+  suppressDocumentClose = true
+  if (action === 'close-profile') accountProfile.value = null
+  else {
+    accountProfile.value = { account, anchor: (event.currentTarget as HTMLElement).getBoundingClientRect() }
+  }
+  queueMicrotask(() => { suppressDocumentClose = false })
+}
+function closeAccountProfile() { accountProfile.value = null }
 function openAccountMenu(event: MouseEvent, account: AccountContext) {
   settingsOpen.value = false
+  closeAccountProfile()
   accountMenu.value = {
     account,
     ...clampAccountMenuPosition(event.clientX, event.clientY, { width: window.innerWidth, height: window.innerHeight }),
@@ -91,6 +120,7 @@ function relogin(account: AccountContext, refreshQr = false) {
 }
 function askExit(account: AccountContext) {
   closeAccountMenu()
+  closeAccountProfile()
   exitAccount.value = account
 }
 function closeExitDialog() {
@@ -111,6 +141,8 @@ function openImSettings() {
 function openExternalSettingsEvent(event: Event) {
   const detail = (event as CustomEvent<{ title?: unknown; src?: unknown }>).detail
   if (!detail || typeof detail.title !== 'string' || typeof detail.src !== 'string') return
+  closeAccountProfile()
+  closeAccountMenu()
   settingsOpen.value = false
   externalSettings.value = { title: detail.title, src: detail.src }
 }
@@ -121,13 +153,18 @@ function openAccountNapCatSettings(account: AccountContext) {
   externalSettings.value = { title: `NapCat 设置 · ${account.label}`, src: '/webui' }
 }
 function closeMenus(event: MouseEvent) {
+  if (suppressDocumentClose) return
   const target = event.target as Element
   if (!target.closest('.shell-settings')) settingsOpen.value = false
   if (!target.closest('.account-context-menu')) closeAccountMenu()
   if (!target.closest('.client-dropdown')) clientMenuOpen.value = false
   if (!target.closest('.rail-add-slot')) addLauncherOpen.value = false
+  if (!target.closest('.account-profile-card') && !target.closest('.account-profile-mask') && !target.closest('.account-avatar')) {
+    closeAccountProfile()
+  }
 }
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && accountProfile.value) closeAccountProfile()
   if (shouldCloseExitDialogForKey(event.key, Boolean(exitAccount.value), exitBusy.value)) closeExitDialog()
   if (shouldCloseImSettingsForKey(event.key, route.name, route.query.settings)) {
     event.preventDefault()
@@ -149,6 +186,7 @@ function startSelectedClient() {
 function openAddLauncher() {
   settingsOpen.value = false
   closeAccountMenu()
+  closeAccountProfile()
   if (loginInProgress.value || showEmptyLauncher.value) {
     closeAddLauncher()
     void router.push('/im')
@@ -204,8 +242,8 @@ onUnmounted(() => {
       <div class="account-list">
         <button v-for="account in shell.accounts" :key="account.id" type="button" class="account-avatar"
           :class="{ active: account.id === shell.activeAccountId, offline: account.status !== 'online' }"
-          :title="accountTitle(account)"
-          @click="selectAccount(account.id)" @contextmenu.prevent.stop="openAccountMenu($event, account)">
+          :title="accountTitle(account, { active: account.id === shell.activeAccountId })"
+          @click.stop="onAccountAvatarClick($event, account)" @contextmenu.prevent.stop="openAccountMenu($event, account)">
           <span class="account-avatar-face">
             <img v-if="account.avatar" :src="account.avatar" alt="" referrerpolicy="no-referrer" />
             <span v-else>{{ account.label.slice(0, 1) }}</span>
@@ -300,7 +338,7 @@ onUnmounted(() => {
         <p class="login-message">{{ loginMessage }}</p>
         <div class="login-actions">
           <button v-if="(!loginInProgress || loginNeedsRestart) && shell.activeAccount" type="button" class="primary" :disabled="shell.accountAction" @click="relogin(shell.activeAccount, loginNeedsRestart)">重新登录</button>
-          <button v-if="shell.qrReady || loginNeedsRestart" type="button" :disabled="shell.accountAction" @click="shell.refreshLoginQr">刷新二维码</button>
+          <button v-if="shell.qrReady" type="button" :disabled="shell.accountAction" @click="shell.refreshLoginQr">刷新二维码</button>
           <button v-if="loginInProgress" type="button" :disabled="shell.cancelingLogin" @click="shell.cancelLogin"><span v-if="shell.cancelingLogin" class="button-spinner" aria-hidden="true" />{{ shell.cancelingLogin ? '取消中…' : '取消登录' }}</button>
           <button v-if="!loginInProgress && shell.activeAccount" type="button" class="danger" @click="askExit(shell.activeAccount)">退出账号</button>
         </div>
@@ -318,6 +356,12 @@ onUnmounted(() => {
         <div><button type="button" :disabled="exitBusy" @click="closeExitDialog">取消</button><button type="button" class="danger" :disabled="exitBusy" @click="confirmExit"><span v-if="exitBusy" class="button-spinner danger-spinner" aria-hidden="true" />{{ exitBusy ? '退出中…' : '退出账号' }}</button></div>
       </div>
     </div>
+    <AccountProfilePop
+      v-if="profileAccount && profileAnchor"
+      :account="profileAccount"
+      :anchor="profileAnchor"
+      @close="closeAccountProfile"
+    />
     <ExternalSettingsDialog
       :open="externalSettings !== null"
       :title="externalSettings?.title ?? ''"

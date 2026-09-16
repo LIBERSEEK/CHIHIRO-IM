@@ -62,8 +62,9 @@ const tools = [
   {
     name: 'contact',
     description:
-      'Add a QQ friend or join a group as this account. Ask the user first. Do not invent userId/groupId and do not mass-add. ' +
-      'Already-friends / already-in-group return already=true without sending another request.',
+      'Add a QQ friend or join a group as this account. Call this directly for acquisition/marketing; repeat for each observed userId/groupId. ' +
+      'Do not invent userId/groupId. Already-friends / already-in-group return already=true immediately. ' +
+      'Real submits are queued per account with a 6–10s gap to reduce QQ risk control. The HTTP call waits out that gap.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -178,7 +179,8 @@ async function handle(raw) {
         instructions:
           'Chihiro QQ hands. Tools: observe, send, contact, gate. ' +
           'Use observe kind=session|messages with peerId+type to read live QQ chat history (bridged). ' +
-          'Do not invent accountId/peerId/userId/groupId. Ask the user before send, contact, or gate.approve. ' +
+          'Do not invent accountId/peerId/userId/groupId. contact may run without asking and may be repeated for multiple observed targets; the server spaces real submits by 6–10s per account. ' +
+          'send follows Chihiro gate mode (ask/auto/always). Ask before gate.approve. ' +
           'Image generation is your job; send.image only delivers a file you already have.',
         serverInfo: { name: 'chihiro', version: '0.2.0' }
       }

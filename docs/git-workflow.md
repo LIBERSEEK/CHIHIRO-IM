@@ -1,6 +1,6 @@
 # Git 约定
 
-产品仓 origin：`https://github.com/LiberSeek/CHIHIRO.git`
+产品仓 origin：`https://github.com/LIBERSEEK/CHIHIRO.git`
 
 ## 产品仓分支
 
@@ -12,7 +12,7 @@
 | **master** | 冻结的稳定快照。不再推进。 |
 
 ```bash
-git clone https://github.com/LiberSeek/CHIHIRO.git
+git clone https://github.com/LIBERSEEK/CHIHIRO.git
 cd CHIHIRO
 git submodule update --init vendor/napcat vendor/astrbot
 ```

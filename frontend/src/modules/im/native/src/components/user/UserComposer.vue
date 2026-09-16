@@ -91,13 +91,15 @@
                         class="chihiro-composer-input"
                         :class="{ 'is-empty': isEmpty }"
                         role="textbox"
+                        tabindex="0"
                         :contenteditable="disabled ? 'false' : 'true'"
                         :aria-placeholder="placeholder"
                         :aria-disabled="disabled"
                         @paste="onPaste"
                         @keydown="onKeydown"
                         @keyup="onKeyup"
-                        @click="emit('input-click')"
+                        @mousedown="onMouseDown"
+                        @click="onClick"
                         @blur="saveSelection"
                         @input="onInput"
                         @compositionstart="onCompositionStart"
@@ -414,6 +416,32 @@
         }
         syncToModel(event)
     }
+    function placeCaretInInput() {
+        const el = mainInput.value
+        if (!el || props.disabled) return
+        el.focus()
+        const sel = window.getSelection()
+        if (!sel) return
+        if (sel.rangeCount > 0 && el.contains(sel.anchorNode)) return
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        range.collapse(false)
+        sel.removeAllRanges()
+        sel.addRange(range)
+        savedRange = range.cloneRange()
+    }
+
+    function onMouseDown() {
+        if (props.disabled) return
+        const el = mainInput.value
+        if (el && document.activeElement !== el) el.focus()
+    }
+
+    function onClick() {
+        emit('input-click')
+        placeCaretInInput()
+    }
+
     function onPaste(event: ClipboardEvent) {
         emit('paste', event)
         if (event.defaultPrevented) return
@@ -576,6 +604,9 @@
     overflow-x: hidden;
     box-sizing: border-box;
     caret-color: var(--color-font);
+    cursor: text;
+    -webkit-user-select: text;
+    user-select: text;
     white-space: pre-wrap;
     word-break: break-word;
 }

@@ -1,15 +1,34 @@
 import { logError } from './log.mjs'
 import { normalizeBotSession, sessionPeerKey } from './bot.mjs'
+import { lookupFacts, needsLookup } from './bot-lookup.mjs'
 
-const SUGGEST_TIMEOUT_MS = 8000
+const SUGGEST_TIMEOUT_MS = 40_000
 const CACHE_TTL_MS = 30_000
 const PROMPT = `你在协助操作员回复即时消息。只输出 JSON，不要 Markdown，不要自称 AI。
 格式：{"replies":[{"id":"1","text":"选项","score":0.82}],"summary":"可直接发送的完整回复"}
 replies：1 到 3 条不同角度、像真人会发的下一句选项，score 为 0 到 1。
-summary：一条总结性、语气完整、可直接发出的回复，不要与 replies 逐字相同。`
+summary：一条总结性、语气完整、可直接发出的回复，不要与 replies 逐字相同。
+把下面整段对话当成一次说话来回，不要对每一句分别回复。连续发言可能来自不同的人，按一场对话来接。前面是上下文，重点回末尾「本轮待回」。
+需要事实时只根据「检索依据」写下一句，不要编造，不要提工具、检索或 AI。没有依据时用自然追问或「我去查一下」。
+群聊里：被 @、被提问、刚回过话、或多人正在讨论且值得插入时给出下一句；纯闲聊、应和、单人自说自话时输出空 replies 和空 summary。`
 
 function emptySuggest(lastMessageId = '') {
   return { lastMessageId: String(lastMessageId || ''), replies: [], summary: '' }
+}
+
+export function pickAutoText(result) {
+  const summary = typeof result?.summary === 'string' ? result.summary.trim() : ''
+  if (summary) return summary
+  const replies = Array.isArray(result?.replies) ? result.replies : []
+  let best = null
+  for (const item of replies) {
+    const text = typeof item?.text === 'string' ? item.text.trim() : ''
+    if (!text) continue
+    const score = Number(item?.score)
+    const next = { text, score: Number.isFinite(score) ? score : 0 }
+    if (!best || next.score > best.score) best = next
+  }
+  return best?.text || ''
 }
 
 export function parseSuggestReplies(text, lastMessageId = '') {
@@ -75,18 +94,50 @@ export function collectSsePlain(body) {
 function clipMessages(messages) {
   if (!Array.isArray(messages)) return []
   const out = []
-  for (const item of messages.slice(-20)) {
+  for (const item of messages.slice(-24)) {
     const role = item?.role === 'me' ? 'me' : item?.role === 'them' ? 'them' : ''
     const text = typeof item?.text === 'string' ? item.text.trim() : ''
     if (!role || !text) continue
-    out.push({ role, text: text.slice(0, 500) })
+    const name = typeof item.name === 'string' ? item.name.trim().slice(0, 24) : ''
+    out.push({ role, name, text: text.slice(0, 500) })
   }
   return out
 }
 
-function buildPrompt(messages) {
-  const lines = clipMessages(messages).map((item) => `${item.role}: ${item.text}`)
-  return `${PROMPT}\n\n对话：\n${lines.join('\n') || '(空)'}\n\n请给出回复建议。`
+function formatLine(item) {
+  const who = item.role === 'me' ? 'me' : (item.name ? `them(${item.name})` : 'them')
+  return `${who}: ${item.text}`
+}
+
+function splitTurn(messages) {
+  const clipped = clipMessages(messages)
+  let lastMe = -1
+  for (let index = clipped.length - 1; index >= 0; index--) {
+    if (clipped[index].role === 'me') {
+      lastMe = index
+      break
+    }
+  }
+  return {
+    clipped,
+    pending: clipped.slice(lastMe + 1).filter((item) => item.role === 'them'),
+  }
+}
+
+function buildPrompt(messages, type, facts = '') {
+  const { clipped, pending } = splitTurn(messages)
+  const lines = clipped.map(formatLine)
+  const scene = type === 'group'
+    ? '场景：群聊。连续消息可能来自不同的人，先判断要不要接话，再给出一句能插进去的回复。'
+    : '场景：私聊，对方可能连发多句。'
+  const turn = pending.length ? `\n本轮待回：\n${pending.map(formatLine).join('\n')}` : ''
+  const evidence = facts ? `\n检索依据（内部，勿发给客户）：\n${facts}` : ''
+  return `${PROMPT}\n\n${scene}\n对话：\n${lines.join('\n') || '(空)'}${turn}${evidence}\n\n请给出回复建议。`
+}
+
+function suggestSessionId(accountId, type, peerId, lastMessageId) {
+  const turn = String(lastMessageId || 'open').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 80)
+  return `suggest:${accountId}:${type}:${peerId}:${turn}`
 }
 
 export function createBotSuggest({ store, qq, astrbot }) {
@@ -181,12 +232,17 @@ export function createBotSuggest({ store, qq, astrbot }) {
     }
     try {
       const configId = session.configId
+      const turn = splitTurn(body?.messages).pending.map((item) => item.text).join('\n')
+      let facts = ''
+      if (needsLookup(turn)) {
+        try { facts = await lookupFacts(turn) } catch (error) { logError('bot-suggest', 'lookup', error) }
+      }
       const payload = {
         username: `chihiro-suggest:${accountId}`,
-        session_id: `suggest:${accountId}:${type}:${peerId}`,
-        message: buildPrompt(body?.messages),
+        session_id: suggestSessionId(accountId, type, peerId, lastMessageId),
+        message: buildPrompt(body?.messages, type, facts),
         enable_streaming: false,
-        flags: { enable_streaming: false },
+        flags: { enable_streaming: false, enable_inline_genui: false },
       }
       if (configId) payload.config_id = configId
       const result = await astrbotJson('/api/v1/chat', { method: 'POST', body: payload })

@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import test from 'node:test'
 import { createRuntime } from '../src/runtime/api.mjs'
 import { createBotController, normalizeBotSession } from '../src/runtime/bot.mjs'
-import { parseSuggestReplies, collectSsePlain } from '../src/runtime/bot-suggest.mjs'
+import { parseSuggestReplies, collectSsePlain, pickAutoText } from '../src/runtime/bot-suggest.mjs'
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -19,6 +19,12 @@ test('legacy boolean sessions normalize without enabling the adapter', () => {
   assert.deepEqual(normalizeBotSession({ enabled: true, mode: 'auto', configId: 'sales' }), {
     enabled: true, mode: 'auto', configId: 'sales',
   })
+})
+
+test('pickAutoText prefers summary then highest score', () => {
+  assert.equal(pickAutoText({ summary: '完整回复', replies: [{ text: '短', score: 1 }] }), '完整回复')
+  assert.equal(pickAutoText({ replies: [{ text: '低', score: 0.2 }, { text: '高', score: 0.9 }] }), '高')
+  assert.equal(pickAutoText({ replies: [] }), '')
 })
 
 test('parseSuggestReplies keeps 1-3 scored texts and reads SSE plain events', () => {
@@ -125,7 +131,7 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   })
   const payload = {
     accountId: 'qq:10001', type: 'private', peerId: '20002', lastMessageId: 'm1',
-    messages: [{ role: 'them', text: '在吗' }],
+    messages: [{ role: 'them', text: '在吗', name: 'Raven' }],
   }
   const autoOff = await send({ ...payload, trigger: 'auto' })
   assert.equal(autoOff.status, 200)
@@ -140,9 +146,14 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.equal(f.astrbotRequests[0].auth, 'Bearer dash-token')
   const chatBody = JSON.parse(f.astrbotRequests[0].body)
   assert.equal(chatBody.username, 'chihiro-suggest:qq:10001')
-  assert.equal(chatBody.session_id, 'suggest:qq:10001:private:20002')
+  assert.equal(chatBody.session_id, 'suggest:qq:10001:private:20002:m1')
   assert.equal(chatBody.enable_streaming, false)
   assert.equal(chatBody.config_id, undefined)
+  assert.match(chatBody.message, /them\(Raven\): 在吗/)
+  assert.match(chatBody.message, /当成一次说话来回/)
+  assert.match(chatBody.message, /连续发言可能来自不同的人/)
+  assert.match(chatBody.message, /本轮待回/)
+  assert.doesNotMatch(chatBody.message, /检索依据（内部/)
 
   await fetch(`${f.base}/api/runtime/bot/session`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

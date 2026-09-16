@@ -3,7 +3,7 @@
 打开千寻即可扫码登录 QQ，不必自己先跑 `QQ --no-sandbox`。
 
 ```bash
-git clone https://github.com/LiberSeek/CHIHIRO.git
+git clone https://github.com/LIBERSEEK/CHIHIRO.git
 cd CHIHIRO
 git submodule update --init vendor/napcat vendor/astrbot
 npm install

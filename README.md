@@ -9,7 +9,7 @@
 
 当前开发：**Bot**（客户会话接待）和 **Agent**（操作员工作台）。营销获客、群发、画像评分、多群情报报告后置。
 
-产品仓：[LiberSeek/CHIHIRO](https://github.com/LiberSeek/CHIHIRO)。交流 / 反馈：QQ 群 **千寻 IM** `1121253225`，见 [联系我们](#联系我们)。
+产品仓：[LIBERSEEK/CHIHIRO](https://github.com/LIBERSEEK/CHIHIRO)。交流 / 反馈：QQ 群 **千寻 IM** `1121253225`，见 [联系我们](#联系我们)。
 
 编码 Agent 先读 [AGENTS.md](AGENTS.md)。产品口径 [docs/product.md](docs/product.md)，工程 [docs/development.md](docs/development.md)。
 
@@ -54,7 +54,7 @@ Telegram / 微信等下拉可占位，不表示该平台已有个人号登录和
 本机（macOS QQ）：
 
 ```bash
-git clone https://github.com/LiberSeek/CHIHIRO.git
+git clone https://github.com/LIBERSEEK/CHIHIRO.git
 cd CHIHIRO
 git submodule update --init vendor/napcat vendor/astrbot
 npm install

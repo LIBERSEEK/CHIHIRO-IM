@@ -589,7 +589,7 @@
 <script setup lang="ts">
 import app from '@chihiro/im-native/host'
 import { i18n } from '@chihiro/im-native/host'
-import { useSuggestStore, IDLE_MS, hasSubstantialText } from '@/modules/assistant/suggest'
+import { useSuggestStore, hasSubstantialText, type SuggestTurnMessage } from '@/modules/assistant/suggest'
 import SuggestBar from '@/modules/assistant/SuggestBar.vue'
 import { useShellStore } from '@/stores/shell'
 import { useWorkspace } from '@/modules/workspace/workspace'
@@ -759,13 +759,36 @@ function isSuggestChatMessage(item: any) {
     if (!item.message_id || !item.message?.length) return false
     return true
 }
-function conversationSuggestMessages() {
+function conversationSuggestMessages(): SuggestTurnMessage[] {
     const self = Number(authStore.loginInfo.uin)
-    return list.filter(isSuggestChatMessage).slice(-20).flatMap((item: any) => {
+    return list.filter(isSuggestChatMessage).slice(-24).flatMap((item: any) => {
         const text = String(item.raw_message || getMsgRawTxt(item) || '').trim()
         if (!text) return []
-        return [{ role: Number(item.sender?.user_id) === self ? 'me' as const : 'them' as const, text }]
+        const senderId = String(item.sender?.user_id ?? '')
+        const atSelf = Boolean(item.atme) || (Array.isArray(item.message) && item.message.some((seg: any) => {
+            if (seg?.type !== 'at') return false
+            const qq = String(seg.qq ?? '')
+            return qq === String(self) || qq === 'all' || qq === '0'
+        }))
+        const rawTime = Number(item.time || 0)
+        return [{
+            id: String(item.message_id),
+            role: Number(item.sender?.user_id) === self ? 'me' as const : 'them' as const,
+            text,
+            senderId,
+            name: String(item.sender?.card || item.sender?.nickname || senderId),
+            atSelf,
+            time: rawTime > 0 && rawTime < 1e12 ? rawTime * 1000 : rawTime,
+        }]
     })
+}
+function suggestSnapshot() {
+    const messages = conversationSuggestMessages()
+    const lastThem = [...messages].reverse().find(item => item.role === 'them')
+    return {
+        lastMessageId: lastThem?.id || '',
+        messages,
+    }
 }
 function lastThemMessage() {
     const self = Number(authStore.loginInfo.uin)
@@ -802,6 +825,8 @@ function bindSuggestActions() {
         fill: fillSuggest,
         send: sendSuggest,
         inputText: () => composer.value?.getPlainText?.() || msg.value,
+        blocked: composerHasContent,
+        snapshot: suggestSnapshot,
     })
 }
 function syncSuggestContext() {
@@ -812,16 +837,16 @@ function syncSuggestContext() {
         peerId: String(chat.show.id),
     })
     bindSuggestActions()
+    syncSuggestPresence()
 }
-function requestAutoSuggest(messageId: string) {
-    if (profileOnly || !suggest.enabled || composerHasContent()) return
-    void suggest.requestSuggest({
-        lastMessageId: messageId,
-        trigger: 'auto',
-        messages: conversationSuggestMessages(),
-    })
+function syncSuggestPresence() {
+    if (profileOnly) {
+        suggest.setFocused(false)
+        return
+    }
+    const visible = typeof document === 'undefined' || document.visibilityState !== 'hidden'
+    suggest.setFocused(Boolean(shell.activeAccountId && chat.show?.id && visible))
 }
-let suggestIdleTimer: ReturnType<typeof setTimeout> | undefined
 let seenSuggestIds = new Set<string>()
 let suggestReady = false
 function seedSuggestIds() {
@@ -829,16 +854,6 @@ function seedSuggestIds() {
     for (const item of list) {
         if (item?.message_id) seenSuggestIds.add(String(item.message_id))
     }
-}
-function onSuggestIdle() {
-    suggest.onOperatorInput()
-    if (suggestIdleTimer !== undefined) clearTimeout(suggestIdleTimer)
-    suggestIdleTimer = setTimeout(() => {
-        suggestIdleTimer = undefined
-        const incoming = lastThemMessage()
-        if (!incoming) return
-        requestAutoSuggest(String(incoming.message_id))
-    }, IDLE_MS)
 }
 function toggleChihiroPlus() {
     chihiroPlusOpen.value = !chihiroPlusOpen.value
@@ -1318,10 +1333,6 @@ watch(() => chat.show?.id, (id) => {
 watch(currentConversationKey, () => {
     suggestReady = false
     seedSuggestIds()
-    if (suggestIdleTimer !== undefined) {
-        clearTimeout(suggestIdleTimer)
-        suggestIdleTimer = undefined
-    }
     syncSuggestContext()
     nextTick(() => {
         seedSuggestIds()
@@ -1354,7 +1365,7 @@ watch(currentConversationKey, () => {
 watch(() => msg.value, (_newMsg, oldMsgVal) => {
     oldMsg.value = oldMsgVal
     scheduleResizeMainInput()
-    onSuggestIdle()
+    suggest.onOperatorInput()
 })
 
 watch(() => [suggest.generating, suggest.replies.length] as const, () => {
@@ -1393,7 +1404,7 @@ onMounted(() => {
             const last = list[list.length - 1]
             const lastId = last ? String(last.message_id || '') : ''
             if (suggestReady && oldIds.length > 0 && newIds.length >= oldIds.length && lastId && !seenSuggestIds.has(lastId) && String(lastThemMessage()?.message_id) === lastId) {
-                requestAutoSuggest(lastId)
+                suggest.noteThemActivity()
             }
             for (const item of list) {
                 if (item?.message_id) seenSuggestIds.add(String(item.message_id))
@@ -1419,15 +1430,16 @@ onMounted(() => {
     window.addEventListener('chihiro-viewer-forward', onViewerForward as EventListener)
     window.addEventListener('chihiro-viewer-delete', onViewerDelete as EventListener)
     window.addEventListener('chihiro-viewer-edit-send', onViewerEditSend as EventListener)
+    document.addEventListener('visibilitychange', syncSuggestPresence)
+    syncSuggestPresence()
 })
 
 onBeforeUnmount(() => {
     viewGeneration++
     searchRequestId.value++
-    if (suggestIdleTimer !== undefined) {
-        clearTimeout(suggestIdleTimer)
-        suggestIdleTimer = undefined
-    }
+    document.removeEventListener('visibilitychange', syncSuggestPresence)
+    suggest.setFocused(false)
+    suggest.discardSurface()
     suggest.closeMenu()
     stopSettlingToBottom()
     if (searchDebounceTimer.value) {

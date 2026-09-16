@@ -6,6 +6,7 @@ import { Readable } from 'node:stream'
 import test from 'node:test'
 
 import { createAgentController } from '../src/runtime/agent.mjs'
+import { CONTACT_MIN_INTERVAL_MS, createContactApi } from '../src/runtime/agent-contact.mjs'
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chihiro-contact-'))
@@ -157,4 +158,39 @@ test('contact rejects invented ids and unknown actions', async (t) => {
   })
   assert.equal(unknown.status, 400)
   assert.equal(unknown.body.error, 'unknown_contact_action')
+})
+
+test('contact paces real submits per account and skips already-known targets', async () => {
+  const waits = []
+  let now = 1_000
+  const friends = new Set()
+  const api = createContactApi({
+    requireAccount: () => {},
+    asList: (value) => value,
+    napcatAction: async (_accountId, action, params) => {
+      if (action === 'get_friend_list') return [...friends].map((user_id) => ({ user_id }))
+      if (action === 'add_friend') {
+        friends.add(String(params.user_id))
+        return { submitted: true }
+      }
+      throw new Error(`unexpected ${action}`)
+    },
+    now: () => now,
+    wait: async (ms) => { waits.push(ms); now += ms },
+    random: () => 0,
+    minIntervalMs: CONTACT_MIN_INTERVAL_MS,
+    jitterMs: 0
+  })
+
+  const first = await api.contact({ accountId: 'qq:10001', action: 'add_friend', userId: '11' })
+  const skip = await api.contact({ accountId: 'qq:10001', action: 'add_friend', userId: '11' })
+  const second = await api.contact({ accountId: 'qq:10001', action: 'add_friend', userId: '22' })
+  const other = await api.contact({ accountId: 'qq:20002', action: 'add_friend', userId: '33' })
+
+  assert.equal(first.waitedMs, 0)
+  assert.equal(skip.already, true)
+  assert.equal(skip.waitedMs, 0)
+  assert.equal(second.waitedMs, CONTACT_MIN_INTERVAL_MS)
+  assert.equal(other.waitedMs, 0)
+  assert.deepEqual(waits, [CONTACT_MIN_INTERVAL_MS])
 })
