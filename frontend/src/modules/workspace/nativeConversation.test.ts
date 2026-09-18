@@ -8,12 +8,24 @@ describe('native IM conversation route restoration', () => {
       id: 10001,
       name: '备注名',
       avatar: 'https://q1.qlogo.cn/g?b=qq&s=0&nk=10001',
+      temp: undefined,
+    })
+    expect(contactToChatInfo({
+      user_id: 10086,
+      nickname: '群成员',
+      group_id: 732085886,
+      group_name: '',
+    } as any)).toMatchObject({
+      type: 'user',
+      id: 10086,
+      temp: 732085886,
     })
     expect(contactToChatInfo({ group_id: 20002, group_name: '群名称' } as any)).toEqual({
       type: 'group',
       id: 20002,
       name: '群名称',
       avatar: 'https://p.qlogo.cn/gh/20002/20002/0',
+      temp: undefined,
     })
     expect(contactToChatInfo({} as any)).toBeNull()
   })

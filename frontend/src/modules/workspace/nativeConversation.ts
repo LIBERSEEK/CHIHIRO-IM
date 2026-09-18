@@ -28,6 +28,9 @@ export function contactToChatInfo(item: NativeContactItem): BaseChatInfoElem | n
   const name = isUser
     ? (item.remark || item.nickname || String(id))
     : (item.group_name || String(id))
+  const temp = isUser && item.group_name === '' && item.group_id
+    ? Number(item.group_id)
+    : undefined
   return {
     type: isUser ? 'user' : 'group',
     id,
@@ -35,6 +38,7 @@ export function contactToChatInfo(item: NativeContactItem): BaseChatInfoElem | n
     avatar: isUser
       ? `https://q1.qlogo.cn/g?b=qq&s=0&nk=${id}`
       : `https://p.qlogo.cn/gh/${id}/${id}/0`,
+    temp,
   }
 }
 

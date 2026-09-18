@@ -66,6 +66,9 @@ import {
     isNativeAccountGenerationCurrent,
     runForNativeAccount,
 } from './asyncAccountScope'
+import { isEmptyChatHistoryResponse } from '@chihiro/im-native/history-request'
+import { confirmPendingSend, failPendingSend, findLatestPendingSend } from '@chihiro/im-native/pending-send'
+import { isNapcatDummyPeer, resolveMessageSession } from '@chihiro/im-native/message-peer'
 import { useAuthStore } from '@renderer/state/auth'
 import { useContactStore } from '@renderer/state/contact'
 import { useChatStore } from '@renderer/state/chat'
@@ -897,12 +900,11 @@ const msgFunctions = {
      */
     getChatHistoryFist: (_: string, msg: { [key: string]: any }) => {
         const uiStore = useUIStore()
-        if (msg.data === null) {
-            new PopInfo().add(
-                PopType.ERR,
-                app.config.globalProperties.$t('获取历史记录失败'),
-            )
-            uiStore.loadHistoryFail = true
+        const chatStore = useChatStore()
+        if (isEmptyChatHistoryResponse(msg) || msg.data == null) {
+            uiStore.loadHistoryFail = false
+            uiStore.nowGetHistory = false
+            if (chatStore.messageList.length === 0) uiStore.canLoadHistory = false
             return
         }
         // 无论是否有本地预填充，都以网络数据替换（保证最新消息不遗漏）
@@ -939,12 +941,9 @@ const msgFunctions = {
     getChatHistory: (_: string, msg: { [key: string]: any }) => {
         const generation = captureNativeAccountGeneration()
         const uiStore = useUIStore()
-        if (msg.data === null) {
-            new PopInfo().add(
-                PopType.ERR,
-                app.config.globalProperties.$t('获取历史记录失败'),
-            )
-            uiStore.loadHistoryFail = true
+        if (isEmptyChatHistoryResponse(msg) || msg.data == null) {
+            uiStore.loadHistoryFail = false
+            uiStore.canLoadHistory = false
             uiStore.historyBeforeTime = undefined
             uiStore.nowGetHistory = false
             return
@@ -1019,34 +1018,33 @@ const msgFunctions = {
     ) => {
         const authStore = useAuthStore()
         const chatStore = useChatStore()
-        if (msg.message_id == undefined) {
-            msg.message_id = msg.data.message_id
-        }
+        const { $t } = app.config.globalProperties
+        const messageId = msg?.message_id ?? msg?.data?.message_id
+        const failed = msg?.status === 'failed'
+            || (typeof msg?.retcode === 'number' && msg.retcode !== 0)
+            || messageId == null
         if (echoList[1] == 'forward') {
-            // PS：这儿写是写了转发成功，事实上不确定消息有没有真的发送出去（x
             popInfo.add(
-                PopType.INFO,
-                app.config.globalProperties.$t('消息已转发'),
+                failed ? PopType.ERR : PopType.INFO,
+                failed
+                    ? (msg?.wording || msg?.message || $t('发送失败'))
+                    : $t('消息已转发'),
             )
-        } else if (echoList[1] == 'uuid') {
-            const messageId = echoList[2]
-            // 去 messagelist 里找到这条消息
-            chatStore.messageList.forEach((item) => {
-                if (item.message_id == messageId) {
-                    item.message_id = msg.message_id
-                    item.fake_msg = false
-                    return
-                }
-            })
-            // 请求消息内容
-            // PS：其实有消息通知的情况下不需要再去主动获取了
-            // 但是为了兼容没有开启自身消息通知的情况，还是保留了这个功能
-            Connector.send(
-                authStore.jsonMap.get_message.name ?? 'get_msg',
-                { message_id: msg.message_id },
-                'getSendMsg_' + msg.message_id,
-            )
+            return
         }
+        if (echoList[1] != 'uuid') return
+        const pending = chatStore.messageList.find((item) => item.message_id == echoList[2])
+        if (failed) {
+            if (pending) failPendingSend(pending)
+            popInfo.add(PopType.ERR, msg?.wording || msg?.message || $t('发送失败'))
+            return
+        }
+        if (pending) confirmPendingSend(pending, messageId)
+        Connector.send(
+            authStore.jsonMap.get_message.name ?? 'get_msg',
+            { message_id: messageId },
+            'getSendMsg_' + messageId,
+        )
     },
     sendFileBack: (
         _: string,
@@ -1322,15 +1320,9 @@ const msgFunctions = {
                     )
                 }, 5000)
             } else {
-                // 列表内最近的一条 fake_msg（倒序查找）
-                let fakeMsg = null as any
-                for (let i = chatStore.messageList.length - 1; i > 0; i--) {
-                    const msg = chatStore.messageList[i]
-                    if (msg.fake_msg != undefined && info.sender == authStore.loginInfo.uin) {
-                        fakeMsg = msg
-                        break
-                    }
-                }
+                const fakeMsg = info.sender == authStore.loginInfo.uin
+                    ? findLatestPendingSend(chatStore.messageList)
+                    : null
                 // 预发送消息刷新
                 if (fakeMsg != null) {
                     // 将这条消息直接替换掉
@@ -1345,8 +1337,7 @@ const msgFunctions = {
                             fakeMsg.message = trueMsg[0].message
                             fakeMsg.raw_message = trueMsg[0].raw_message
                             fakeMsg.time = trueMsg[0].time
-                            fakeMsg.fake_msg = undefined
-                            fakeMsg.revoke = false
+                            confirmPendingSend(fakeMsg)
                         }
                     })
                 }
@@ -2234,12 +2225,17 @@ function newMsg(_: string, data: any) {
         const info = infoList[0]
         const loginId = authStore.loginInfo.uin
         const showId = chatStore.chatInfo.show.id
-        // Bot / 其它客户端代发：message_sent.user_id 是自己，对端在 target_id。
-        const id = info.group_id
-            ?? (data.post_type === 'message_sent'
-                ? (info.target_id ?? info.private_id)
-                : info.private_id)
-        const sender = info.sender
+        const peer = resolveMessageSession({
+            message_type: data.message_type,
+            sub_type: data.sub_type,
+            post_type: data.post_type,
+            group_id: info.group_id ?? data.group_id,
+            user_id: info.private_id ?? data.user_id,
+            target_id: info.target_id ?? data.target_id,
+            sender: { user_id: info.sender ?? data.sender?.user_id },
+        }, loginId)
+        const id = peer.sessionId
+        const sender = peer.senderId || info.sender
         // 在好友列表里找一下他
         const senderInfo = contactStore.userList.find((item) => {
             return item.user_id == sender
@@ -2247,15 +2243,9 @@ function newMsg(_: string, data: any) {
         const isImportant = senderInfo?.class_id == 9999
 
         // 预发送消息填充 ============================================
-        // 列表内最近的一条 fake_msg（倒序查找）
-        let fakeMsg = null as any
-        for (let i = chatStore.messageList.length - 1; i > 0; i--) {
-            const msg = chatStore.messageList[i]
-            if (msg.fake_msg != undefined && sender == loginId) {
-                fakeMsg = msg
-                break
-            }
-        }
+        const fakeMsg = sender == loginId
+            ? findLatestPendingSend(chatStore.messageList)
+            : null
         // 预发送消息刷新
         if (fakeMsg != null) {
             // 将这条消息直接替换掉
@@ -2270,12 +2260,9 @@ function newMsg(_: string, data: any) {
                     fakeMsg.message = trueMsg[0].message
                     fakeMsg.raw_message = trueMsg[0].raw_message
                     fakeMsg.time = trueMsg[0].time
-                    fakeMsg.fake_msg = undefined
-                    fakeMsg.revoke = false
+                    confirmPendingSend(fakeMsg)
                 }
             })
-            // 移除最顶端的一条消息以被动刷新整个列表
-            chatStore.messageList.shift()
             return
         }
 
@@ -2350,8 +2337,8 @@ function newMsg(_: string, data: any) {
             }
         }
 
-        const isGroupMessage = data.message_type === 'group'
-        const isTempGroupMessage = data.sub_type === 'group'
+        const isGroupMessage = peer.isGroup
+        const isTempGroupMessage = peer.isTemp
         const groupNoticeType = settingsStore.sysConfig.group_notice_type
         const hasForcedGroupInnerNotice = data.atme || data.atall || isImportant || isGroupNotice
         const allowGroupInnerNotice = !isGroupMessage ||
@@ -2362,15 +2349,16 @@ function newMsg(_: string, data: any) {
             hasForcedGroupInnerNotice
 
         // 会话状态更新 ============================================
-        const sessionId = Number(isTempGroupMessage ? sender : id)
-        let session = contactStore.baseOnMsgList.get(sessionId)
-        if (!session) {
+        const sessionId = id
+        const canTouchSession = Boolean(sessionId) && !isNapcatDummyPeer(sessionId)
+        let session = canTouchSession ? contactStore.baseOnMsgList.get(sessionId) : undefined
+        if (canTouchSession && !session) {
             if (isTempGroupMessage) {
                 session = {
-                    user_id: sender,
+                    user_id: sessionId,
                     nickname: app.config.globalProperties.$t('临时会话'),
                     remark: data.sender.user_id,
-                    group_id: data.sender.group_id,
+                    group_id: peer.sourceGroupId || 0,
                     group_name: '',
                 } as UserFriendElem & UserGroupElem
             } else {
@@ -2382,7 +2370,7 @@ function newMsg(_: string, data: any) {
                 )
             }
         }
-        if (session) {
+        if (session && canTouchSession) {
             Object.assign(session, formatMessageData(data, isGroupMessage))
             if (
                 sender != loginId &&

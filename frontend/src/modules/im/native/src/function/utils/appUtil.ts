@@ -44,6 +44,7 @@ import {
 } from 'vue'
 import { sendMsgRaw } from './msgUtil'
 import { dbGetLatest } from './localHistoryUtil'
+import { chatHistoryRequestParams } from '@chihiro/im-native/history-request'
 import { parseMsg } from '../sender'
 import { Notify } from '../notify'
 import {
@@ -131,7 +132,9 @@ export async function loadHistory(info: BaseChatInfoElem) {
         }
     }
     if (!isNativeAccountGenerationCurrent(generation)) return
-    if (!loadHistoryMessage(info.id, info.type)) {
+    if (!loadHistoryMessage(info.id, info.type, 20, 'getChatHistoryFist', {
+        tempGroupId: info.temp,
+    })) {
         new PopInfo().add(
             PopType.ERR,
             app.config.globalProperties.$t('加载历史消息失败'),
@@ -139,11 +142,16 @@ export async function loadHistory(info: BaseChatInfoElem) {
         )
     }
 }
+
+const recentHistoryRequestAt = new Map<string, number>()
+const HISTORY_REQUEST_DEDUP_MS = 800
+
 export function loadHistoryMessage(
     id: number,
     type: string,
     count = 20,
     echo = 'getChatHistoryFist',
+    extra?: { messageId?: string | number, tempGroupId?: number },
 ) {
     const authStore = useAuthStore()
     const chatStore = useChatStore()
@@ -154,15 +162,21 @@ export function loadHistoryMessage(
     } else {
         name = authStore.jsonMap.message_list.name
     }
+    const request = chatHistoryRequestParams({
+        id,
+        type,
+        count: fullPage ? chatStore.messageList.length + count : count,
+        messageId: extra?.messageId,
+        tempGroupId: extra?.tempGroupId,
+    })
+    const dedupeKey = `${name ?? 'get_chat_history'}:${echo}:${type}:${id}:${String(request.message_id ?? 0)}`
+    const now = Date.now()
+    if (now - (recentHistoryRequestAt.get(dedupeKey) ?? 0) < HISTORY_REQUEST_DEDUP_MS) return true
+    recentHistoryRequestAt.set(dedupeKey, now)
 
     Connector.send(
         name ?? 'get_chat_history',
-        {
-            group_id: type == 'group' ? id : undefined,
-            user_id: type != 'group' ? id : undefined,
-            message_id: 0,
-            count: fullPage ? chatStore.messageList.length + count : count,
-        },
+        request,
         echo,
     )
     return true

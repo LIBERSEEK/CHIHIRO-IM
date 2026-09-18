@@ -58,7 +58,7 @@
                                 <FriendBody
                                     v-for="item in filteredOnMsgList"
                                     :key="'inMessage-' + (item.user_id ? item.user_id : item.group_id)"
-                                    :select="chat.show.id === item.user_id || (chat.show.id === item.group_id && chat.group_name != '')"
+                                    :select="isSessionListItemActive(chat.show, item)"
                                     :menu="menuSelect === item"
                                     :data="item"
                                     from="message"
@@ -85,7 +85,7 @@
                                 <FriendBody
                                     v-for="item in filteredAssistList"
                                     :key="'inMessage-' + (item.user_id ? item.user_id : item.group_id)"
-                                    :select="chat.show.id === item.user_id || (chat.show.id === item.group_id && chat.group_name != '')"
+                                    :select="isSessionListItemActive(chat.show, item)"
                                     :menu="menuSelect === item"
                                     :data="item"
                                     from="message"
@@ -167,6 +167,7 @@
     import { library } from '@fortawesome/fontawesome-svg-core'
     import { login as loginInfo } from '@renderer/function/connect'
     import { getSessionNotice, getShowName, setSessionNotice, updateBaseOnMsgList } from '@renderer/function/utils/msgUtil'
+    import { isSessionListItemActive } from '@chihiro/im-native/session-open'
     import { matchPinyin } from '@renderer/function/utils/pinyin'
 
     import {

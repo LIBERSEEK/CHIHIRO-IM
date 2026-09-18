@@ -25,6 +25,8 @@ import {
     getSessionId,
 } from './sessionUtil'
 import { shouldShowChatDateChip } from '@chihiro/im-native/message-time'
+import { isNapcatDummyPeer, resolvePrivateSendTarget } from '@chihiro/im-native/message-peer'
+import { failPendingSend } from '@chihiro/im-native/pending-send'
 
 const logger = new Logger()
 
@@ -536,25 +538,23 @@ export function sendMsgRaw(
                 )
                 break
             case 'user': {
-                if (String(id).indexOf('/') > 1) {
-                    Connector.send(
-                        authStore.jsonMap.message_list.name_temp_send ??
-                        'send_temp_msg',
-                        {
-                            user_id: id.split('/')[0],
-                            group_id: id.split('/')[1],
-                            message: msg,
-                        },
-                        echo + '_uuid_' + msgUUID,
-                    )
-                } else {
-                    Connector.send(
-                        authStore.jsonMap.message_list.name_user_send ??
-                        'send_msg',
-                        { user_id: id, message: msg },
-                        echo + '_uuid_' + msgUUID,
-                    )
+                const target = resolvePrivateSendTarget(id, chatStore.chatInfo.show.temp)
+                if (!target.userId) {
+                    const pending = chatStore.messageList.find((item) => item.message_id == msgUUID)
+                    if (pending) failPendingSend(pending)
+                    break
                 }
+                Connector.send(
+                    target.isTemp
+                        ? (authStore.jsonMap.message_list?.name_temp_send ?? 'send_private_msg')
+                        : (authStore.jsonMap.message_list?.name_user_send ?? 'send_msg'),
+                    {
+                        user_id: target.userId,
+                        message: msg,
+                        ...(target.isTemp ? { group_id: target.groupId } : {}),
+                    },
+                    echo + '_uuid_' + msgUUID,
+                )
                 break
             }
         }
@@ -567,6 +567,7 @@ export function updateLastestHistory(item: UserFriendElem & UserGroupElem) {
     // 发起获取历史消息请求
     const type = item.user_id ? 'user' : 'group'
     const id = item.user_id ? item.user_id : item.group_id
+    if (isNapcatDummyPeer(id)) return
     let name
     if (authStore.jsonMap.message_list && type != 'group') {
         name = authStore.jsonMap.message_list.private_name
@@ -595,13 +596,14 @@ function getSessionList() {
     if (settingsStore.sysConfig.session_display_mode === 'all') {
         contactStore.userList.forEach((item) => {
             const id = getSessionId(item)
-            if (Number.isFinite(id) && id > 0) {
+            if (Number.isFinite(id) && id > 0 && !isNapcatDummyPeer(id)) {
                 sessionMap.set(id, item)
             }
         })
     }
 
     contactStore.baseOnMsgList.forEach((item, id) => {
+        if (isNapcatDummyPeer(id) || isNapcatDummyPeer(getSessionId(item))) return
         sessionMap.set(id, item)
     })
 

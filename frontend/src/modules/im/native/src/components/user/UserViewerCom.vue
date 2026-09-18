@@ -1579,6 +1579,9 @@ defineExpose({
     position: fixed;
     inset: 0;
     --safe-area-bottom: 0px;
+    background-color: rgba(6, 6, 8, 0.66);
+    backdrop-filter: blur(36px) saturate(0.8);
+    -webkit-backdrop-filter: blur(36px) saturate(0.8);
 }
 .viewer-bar {
     width: 100% !important;
@@ -1596,6 +1599,8 @@ defineExpose({
     bottom: calc(56px + var(--safe-area-bottom, 0px)) !important;
     height: 40px;
     padding: 0 20px;
+    display: flex;
+    align-items: center;
     justify-content: flex-end;
     background: transparent;
     border: 0;
@@ -1608,12 +1613,33 @@ defineExpose({
     margin: 0 8px;
     border: 2px solid rgba(255, 255, 255, 0.75);
     border-radius: 50%;
+    flex: 0 0 18px;
 }
 .viewer-tool-config-bar > div.color:hover,
 .viewer-tool-config-bar > div.line-width:hover {
     transform: none;
 }
-.viewer-tool-config-bar > div.line-width,
+.viewer-tool-config-bar > div.line-width {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    margin: 0 4px;
+    background-color: transparent;
+    border-radius: 50%;
+    box-sizing: border-box;
+    flex: 0 0 24px;
+}
+.viewer-tool-config-bar > div.line-width > div {
+    width: var(--line-width);
+    height: var(--line-width);
+    margin: 0;
+    border-radius: 50%;
+    background-color: rgba(255, 255, 255, 0.92);
+    flex: none;
+}
 .viewer-tool-config-bar > svg.rect-is-fill {
     width: 18px;
     height: 18px;
@@ -1621,8 +1647,6 @@ defineExpose({
     margin: 0 6px;
     background-color: transparent;
     border-radius: 6px;
-}
-.viewer-tool-config-bar > svg.rect-is-fill {
     color: rgba(255, 255, 255, 0.85);
 }
 .viewer-tool-config-bar > div.active {
@@ -1814,7 +1838,6 @@ defineExpose({
     .viewer-tool-config-bar {
         bottom: calc(56px + var(--safe-area-bottom, 0px)) !important;
         justify-content: flex-end;
-        background: transparent !important;
     }
 }
 

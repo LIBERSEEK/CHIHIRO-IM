@@ -182,7 +182,7 @@ function restoreRoutedConversation() {
   const target = findRoutedConversation()
   if (!target) return
   profileOnly.value = false
-  if (chat.chatInfo.show.id === target.id && chat.chatInfo.show.type === target.type) {
+  if (Number(chat.chatInfo.show.id) === Number(target.id) && chat.chatInfo.show.type === target.type) {
     workspace.selectIm()
     return
   }

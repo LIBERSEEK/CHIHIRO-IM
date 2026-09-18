@@ -147,6 +147,13 @@ html.bp-light,
     display: none !important;
 }
 
+#base-app .note-nomsg > a {
+    display: inline-block;
+    padding: 8px 18px;
+    line-height: 1.4;
+    border-radius: 999px;
+}
+
 @media (max-width: 700px) {
     /* Stapxs 小屏会把列表收成 80px 图标栏、顶出 50px 蓝块，并给隐藏的底栏留 75px。千寻没有那条底栏，改成列表铺满、聊天全屏盖住。 */
     #base-app .main-body {

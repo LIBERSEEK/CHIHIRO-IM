@@ -4,6 +4,20 @@ import { useContactStore } from './src/state/contact'
 
 export type SessionContact = UserFriendElem & UserGroupElem
 
+export function isSessionListItemActive(
+  show: { id?: number | string, type?: string },
+  item: { user_id?: number | string, group_id?: number | string },
+): boolean {
+  const showId = Number(show.id)
+  if (!Number.isFinite(showId)) return false
+  const userId = Number(item.user_id)
+  const isUserItem = Number.isFinite(userId) && userId !== 0
+  if (show.type === 'group') {
+    return !isUserItem && Number(item.group_id) === showId
+  }
+  return isUserItem && userId === showId
+}
+
 export function preparePrivateChat(input: {
   userId: number
   nickname?: string

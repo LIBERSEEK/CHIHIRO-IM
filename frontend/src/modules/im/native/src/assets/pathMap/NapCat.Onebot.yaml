@@ -66,6 +66,8 @@ friend_category:
 message_list:
     name: get_group_msg_history
     private_name: get_friend_msg_history
+    name_temp_send: send_private_msg
+    name_user_send: send_msg
     source: $.data.messages[*]
     pagerType: full # 分页类型：全量 full / 增量 incremental / 无分页 none
     type: $.data

@@ -15,7 +15,7 @@ vi.mock('./src/function/utils/msgUtil', async () => {
   }
 })
 
-import { prepareGroupChat, preparePrivateChat } from './session-open'
+import { isSessionListItemActive, prepareGroupChat, preparePrivateChat } from './session-open'
 import { useContactStore } from './src/state/contact'
 
 beforeEach(() => setActivePinia(createPinia()))
@@ -52,6 +52,24 @@ describe('preparePrivateChat', () => {
     expect(info.name).toContain('备注')
     expect(info.temp).toBeUndefined()
     expect(contacts.onMsgList.some((item) => Number(item.user_id) === 42)).toBe(true)
+  })
+})
+
+describe('isSessionListItemActive', () => {
+  const group = { group_id: 715825910, group_name: '55中转站2群', user_id: 0 }
+  const temp = { user_id: 2654778181, nickname: 'ttg', group_id: 715825910, group_name: '' }
+  const friend = { user_id: 42, group_id: 1, group_name: '我的好友' }
+
+  it('does not highlight a temp session when the source group is open', () => {
+    expect(isSessionListItemActive({ id: 715825910, type: 'group' }, group)).toBe(true)
+    expect(isSessionListItemActive({ id: 715825910, type: 'group' }, temp)).toBe(false)
+    expect(isSessionListItemActive({ id: 715825910, type: 'group' }, friend)).toBe(false)
+  })
+
+  it('highlights only the matching private session', () => {
+    expect(isSessionListItemActive({ id: 2654778181, type: 'user' }, temp)).toBe(true)
+    expect(isSessionListItemActive({ id: 2654778181, type: 'user' }, group)).toBe(false)
+    expect(isSessionListItemActive({ id: 42, type: 'user' }, friend)).toBe(true)
   })
 })
 

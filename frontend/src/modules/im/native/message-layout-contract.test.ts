@@ -6,6 +6,8 @@ const noticeBody = readFileSync(new URL('./src/components/user/UserNoticeBody.vu
 const friendBody = readFileSync(new URL('./src/components/user/UserFriendBody.vue', import.meta.url), 'utf8')
 const chatPage = readFileSync(new URL('./src/pages/user/UserChat.vue', import.meta.url), 'utf8')
 const sessionRail = readFileSync(new URL('./src/components/user/UserSessionRail.vue', import.meta.url), 'utf8')
+const handlers = readFileSync(new URL('./src/function/msg.ts', import.meta.url), 'utf8')
+const userCss = readFileSync(new URL('./src/assets/css/user.css', import.meta.url), 'utf8')
 
 describe('IM message bubble layout contract', () => {
   it('grows bubbles up from the avatar with a Telegram appendix', () => {
@@ -120,5 +122,16 @@ describe('IM message bubble layout contract', () => {
     expect(msgBody).toContain('bottom: 4px')
     expect(msgBody).toContain('color-mix(in srgb, var(--color-font) 8%, transparent)')
     expect(msgBody).not.toContain('background: transparent !important;\n    backdrop-filter: none !important;')
+  })
+
+  it('confirms the first outgoing placeholder instead of leaving it gray', () => {
+    expect(handlers).toContain('findLatestPendingSend')
+    expect(handlers).toContain('confirmPendingSend')
+    expect(handlers).not.toContain('i > 0; i--')
+  })
+
+  it('gives the empty-history chip vertical padding', () => {
+    expect(userCss).toContain('#base-app .note-nomsg > a')
+    expect(userCss).toContain('padding: 8px 18px')
   })
 })

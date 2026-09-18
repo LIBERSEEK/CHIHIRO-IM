@@ -175,7 +175,7 @@
             @scrollend="onChatScrollEnd"
             @wheel.passive="onMsgPanWheel">
             <template v-if="!details[3].open">
-                <div v-if="!uiStore.canLoadHistory" class="note note-nomsg">
+                <div v-if="!uiStore.canLoadHistory && list.length > 0" class="note note-nomsg">
                     <hr>
                     <a>{{ $t('没有更多消息了') }}</a>
                 </div>
@@ -588,7 +588,7 @@
         </div>
         <!-- 转发面板 -->
         <Transition name="forward-float" :duration="{ enter: 220, leave: 180 }">
-            <div v-if="tags.showForwardPan" class="forward-pan">
+            <div v-if="tags.showForwardPan" v-esc="cancelForward" class="forward-pan">
                 <div class="ss-card card">
                     <header>
                         <span>{{ $t('转发消息') }}</span>
@@ -640,6 +640,7 @@ import {
     hasOutgoingContent as hasComposerContent,
     prioritizeForwardContacts,
 } from '@chihiro/im-native/chat-interaction'
+import { chatHistoryRequestParams } from '@chihiro/im-native/history-request'
 import SendUtil from '@renderer/function/sender'
 import Option, { get } from '@renderer/function/option'
 import Info from '@renderer/pages/user/UserInfo.vue'
@@ -672,6 +673,7 @@ import {
     loadHistory as loadHistoryFirst,
     loadHistoryMessage,
     shouldAutoFocus,
+	vEsc,
 	vMenu,
 	vMove,
 	VMoveOptions,
@@ -870,7 +872,9 @@ function requestUnreadHistory(count: number) {
     const id = chat.show?.id
     if (!type || !id) return
     if (!list.length) {
-        loadHistoryMessage(id, type, count, 'getChatHistoryFist')
+        loadHistoryMessage(id, type, count, 'getChatHistoryFist', {
+            tempGroupId: chat.show?.temp,
+        })
         return
     }
     const firstMsgId = list[0].message_id
@@ -883,12 +887,13 @@ function requestUnreadHistory(count: number) {
     }
     Connector.send(
         name ?? 'get_chat_history',
-        {
-            group_id: type == 'group' ? id : undefined,
-            user_id: type != 'group' ? id : undefined,
-            message_id: firstMsgId,
+        chatHistoryRequestParams({
+            id,
+            type,
             count: fullPage ? chatStore.messageList.length + count : count,
-        },
+            messageId: firstMsgId,
+            tempGroupId: chat.show?.temp,
+        }),
         'getChatHistory',
     )
 }
@@ -1376,6 +1381,11 @@ function onChihiroDocClick(e: Event) {
 function onChihiroDocKey(e: KeyboardEvent) {
     if (e.key !== 'Escape') return
     if (tags.value.openChatInfo) return
+    if (tags.value.showForwardPan) {
+        cancelForward()
+        e.preventDefault()
+        return
+    }
     if (tags.value.showMsgMenu) {
         closeMsgMenu()
         e.preventDefault()
@@ -2007,12 +2017,13 @@ async function loadMoreHistory() {
         }
         Connector.send(
             name ?? 'get_chat_history',
-            {
-                group_id: type == 'group' ? id : undefined,
-                user_id: type != 'group' ? id : undefined,
-                message_id: firstMsgId,
+            chatHistoryRequestParams({
+                id,
+                type,
                 count: fullPage? chatStore.messageList.length + 20: 20,
-            },
+                messageId: firstMsgId,
+                tempGroupId: chatStore.chatInfo.show.temp,
+            }),
             'getChatHistory',
         )
     }
@@ -2043,12 +2054,13 @@ function fillSeqGaps(anchorMsgIds: string[]) {
     for (const anchorMsgId of anchorMsgIds) {
         Connector.send(
             name ?? 'get_chat_history',
-            {
-                group_id: type == 'group' ? id : undefined,
-                user_id: type != 'group' ? id : undefined,
-                message_id: anchorMsgId,
+            chatHistoryRequestParams({
+                id,
+                type,
                 count: 20,
-            },
+                messageId: anchorMsgId,
+                tempGroupId: chatStore.chatInfo.show.temp,
+            }),
             'getChatHistoryGapFill_' + anchorMsgId,
         )
     }
@@ -4854,12 +4866,17 @@ function exitWin() {
 .user-skin.chat-pan.has-session-rail > .chihiro-unread-hint {
     right: calc(16px + var(--chihiro-session-rail-width));
 }
-.user-skin.chat-pan > .chat-info-pan {
+.user-skin.chat-pan > .chat-info-pan,
+.user-skin.chat-pan > .forward-pan {
     inset: 0;
     width: auto;
     height: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
-.user-skin.chat-pan.has-session-rail > .chat-info-pan {
+.user-skin.chat-pan.has-session-rail > .chat-info-pan,
+.user-skin.chat-pan.has-session-rail > .forward-pan {
     right: var(--chihiro-session-rail-width);
 }
 .user-skin.chat-pan.contact-profile-view > .chat-info-pan,
@@ -4912,9 +4929,21 @@ function exitWin() {
 .forward-float-leave-to {
     opacity: 0;
 }
+.user-skin.chat-pan > .forward-pan > div.card {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    margin: 0 !important;
+    transform: none;
+    width: min(420px, calc(100% - 48px)) !important;
+    max-height: min(80%, 640px) !important;
+    height: min(70%, 640px) !important;
+}
 .forward-float-enter-from > div.card,
 .forward-float-leave-to > div.card {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(0.96) !important;
+    transform: scale(0.96) !important;
 }
 </style>
