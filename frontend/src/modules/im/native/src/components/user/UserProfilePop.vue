@@ -96,8 +96,10 @@ import { copyToClipboard } from '@renderer/function/utils/systemUtil'
 import { useAuthStore } from '@renderer/state/auth'
 import { useChatStore } from '@renderer/state/chat'
 import { useContactStore } from '@renderer/state/contact'
-import type { Session } from '@renderer/function/elements/information'
+import type { BaseChatInfoElem } from '@renderer/function/elements/information'
 import { i18n } from '@chihiro/im-native/host'
+import { openAddFriendApply } from '@chihiro/im-native/add-contact'
+import { preparePrivateChat } from '@chihiro/im-native/session-open'
 
 defineOptions({ name: 'UserProfilePop' })
 
@@ -119,6 +121,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     close: []
+    'start-chat': [info: BaseChatInfoElem]
 }>()
 
 const $t = i18n.global.t
@@ -268,7 +271,11 @@ function callUser() {
 }
 
 function addFriend() {
-    new PopInfo().add(PopType.INFO, $t('暂不支持加好友'), true)
+    emit('close')
+    openAddFriendApply({
+        userId: props.userId,
+        nickname: displayName.value || props.nickname || props.card,
+    })
 }
 
 function startChat() {
@@ -276,22 +283,13 @@ function startChat() {
         emit('close')
         return
     }
-    let chat: Session | undefined = contactStore.userList.find((item) => item.user_id == props.userId)
-    if (!chat) {
-        chat = {
-            user_id: props.userId,
-            nickname: displayName.value || $t('临时会话'),
-            remark: String(props.userId),
-            group_id: inGroup.value ? chatStore.chatInfo.show.id : 0,
-            group_name: '',
-        }
-    }
-    contactStore.baseOnMsgList.set(Number(props.userId), chat)
-    nextTick(() => {
-        const item = document.getElementById('user-' + props.userId)
-        if (item) item.click()
-        emit('close')
+    const info = preparePrivateChat({
+        userId: Number(props.userId),
+        nickname: displayName.value || props.nickname || props.card,
+        groupId: inGroup.value ? Number(chatStore.chatInfo.show.id) : undefined,
     })
+    emit('start-chat', info)
+    emit('close')
 }
 
 watch(() => props.userId, load)

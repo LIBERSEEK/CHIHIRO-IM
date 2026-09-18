@@ -693,7 +693,7 @@ import {
 } from "@/modules/agent/native/src/utils/providerMetadata";
 import { useToast } from "@/modules/agent/native/src/utils/toast";
 import UserChatHeader from "./UserChatHeader.vue";
-import { useAgentNavigation } from "@/modules/agent/native/src/navigation";
+import { hostedAgentIdFromLocation, useAgentNavigation } from "@/modules/agent/native/src/navigation";
 
 export type UserChatProps = {
   chatboxMode?: boolean;
@@ -1155,14 +1155,13 @@ watch(activeMessages, () => {
 
 function getRouteSessionId() {
   if (props.chihiroHosted) {
-    if (route.name === 'agent') {
-      const raw = route.params.conversationId;
-      return Array.isArray(raw) ? raw[0] : raw || "";
-    }
-    const agent = route.query.agent;
-    if (Array.isArray(agent)) return agent[0] || "";
-    if (typeof agent === "string") return agent;
-    return workspace.activePane === "agent" ? workspace.agentSessionId || "" : "";
+    return hostedAgentIdFromLocation({
+      routeName: route.name,
+      conversationId: route.params.conversationId,
+      queryAgent: route.query.agent,
+      workspacePane: workspace.activePane,
+      workspaceSessionId: workspace.agentSessionId,
+    });
   }
   const raw = route.params.conversationId;
   return Array.isArray(raw) ? raw[0] : raw || "";
@@ -1443,6 +1442,7 @@ async function selectSession(sessionId: string, pushRoute = true) {
   if (pushRoute) {
     await navigation.openSession(sessionId);
   }
+  showChatWorkspace();
   if (!loadedSessions[sessionId]) {
     await loadSessionMessages(sessionId);
   }

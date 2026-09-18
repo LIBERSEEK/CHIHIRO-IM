@@ -33,6 +33,8 @@ export interface BaseChatInfoElem {
     appendInfo?: string
     jump?: string
     enterUnread?: number
+    /** Source group id for a temporary private chat opened from a group member. */
+    temp?: number
 }
 
 export type SessionNoticeMode = 'notify' | 'silent' | 'assist' | 'block'

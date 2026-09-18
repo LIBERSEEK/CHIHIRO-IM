@@ -31,6 +31,26 @@ export function routeForHostedAgent(sessionId?: string): RouteLocationRaw {
     : { path: '/im', query: { tab: 'workbench' } }
 }
 
+function firstRouteString(value: unknown): string {
+  if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : ''
+  return typeof value === 'string' ? value : ''
+}
+
+export function hostedAgentIdFromLocation(input: {
+  routeName?: unknown
+  conversationId?: unknown
+  queryAgent?: unknown
+  workspacePane?: string
+  workspaceSessionId?: string | null
+}): string {
+  if (input.routeName === 'agent') return firstRouteString(input.conversationId)
+  const queryAgent = firstRouteString(input.queryAgent)
+  const workspaceAgent = input.workspacePane === 'agent' ? input.workspaceSessionId || '' : ''
+  // Selecting a conversation updates workspace before the route leaves ?agent=models.
+  if (queryAgent === 'models' && workspaceAgent && workspaceAgent !== 'models') return workspaceAgent
+  return queryAgent || workspaceAgent
+}
+
 function dispatchExternalSettings(target: ExternalSettingsTarget) {
   if (typeof window === 'undefined') return
   window.dispatchEvent(new CustomEvent('chihiro-open-external-settings', { detail: target }))

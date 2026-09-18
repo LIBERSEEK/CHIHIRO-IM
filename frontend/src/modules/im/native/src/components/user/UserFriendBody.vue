@@ -14,9 +14,14 @@
         <div :class="data.new_msg === true ? 'new' : ''" />
         <font-awesome-icon v-if="data.user_id == -10000" :icon="['fas', 'bell']" />
         <font-awesome-icon v-else-if="data.user_id == -10001" :icon="['fas', 'user-group']" />
-        <img v-else loading="lazy" :title="sessionName"
-            :src="data.user_id ? 'https://q1.qlogo.cn/g?b=qq&s=0&nk=' + data.user_id :
-                'https://p.qlogo.cn/gh/' + data.group_id + '/' + data.group_id + '/0'">
+        <div v-else-if="botMark" class="chihiro-bot-avatar" :class="'is-' + botMark.mode">
+            <img loading="lazy" :title="sessionName" :src="avatarSrc">
+            <span class="chihiro-bot-badge" :class="{ working: botMark.working }">
+                <template v-if="botMark.working"><i /><i /><i /></template>
+                <template v-else>BOT</template>
+            </span>
+        </div>
+        <img v-else loading="lazy" :title="sessionName" :src="avatarSrc">
         <div>
             <div>
                 <p>{{ sessionName }}</p>
@@ -51,6 +56,7 @@ import { library } from '@fortawesome/fontawesome-svg-core'
 import { faBellSlash, faThumbTack } from '@fortawesome/free-solid-svg-icons'
 import { formatSessionTime } from '@renderer/function/utils/systemUtil'
 import { getShowName, isSessionMuted } from '@renderer/function/utils/msgUtil'
+import { useSuggestStore } from '@/modules/assistant/suggest'
 
 library.add(faBellSlash, faThumbTack)
 
@@ -63,8 +69,21 @@ const props = defineProps<{
     from?: string
 }>()
 
+const suggest = useSuggestStore()
 const sessionName = computed(() => getShowName(props.data?.group_name || props.data?.nickname, props.data?.remark))
 const previewText = computed(() => String(props.data?.raw_msg || ''))
+const avatarSrc = computed(() => props.data?.user_id
+    ? 'https://q1.qlogo.cn/g?b=qq&s=0&nk=' + props.data.user_id
+    : 'https://p.qlogo.cn/gh/' + props.data.group_id + '/' + props.data.group_id + '/0')
+const botMark = computed(() => {
+    if (props.from !== 'message') return null
+    const userId = Number(props.data?.user_id)
+    if (userId === -10000 || userId === -10001) return null
+    const type = props.data?.group_id ? 'group' as const : 'private' as const
+    const peerId = String(props.data?.group_id ?? props.data?.user_id ?? '')
+    if (!/^\d+$/.test(peerId)) return null
+    return suggest.listMark(type, peerId)
+})
 
 const unreadCount = computed(() => {
     const n = Number(props.data?.unread)
@@ -101,6 +120,73 @@ const muted = computed(() => isSessionMuted(props.data || {}))
 }
 #base-app .friend-body > div:nth-child(1) {
     display: none !important;
+}
+#base-app .friend-body > .chihiro-bot-avatar {
+    position: relative;
+    flex: none !important;
+    width: 36px;
+    height: 36px;
+    margin: 0 !important;
+    overflow: visible !important;
+}
+#base-app .friend-body > .chihiro-bot-avatar img {
+    width: 36px !important;
+    height: 36px !important;
+    display: block;
+}
+.chihiro-bot-badge {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    z-index: 1;
+    min-width: 20px;
+    height: 12px;
+    padding: 0 3px;
+    box-sizing: border-box;
+    border: 1.5px solid var(--color-card);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    line-height: 9px;
+    text-align: center;
+    pointer-events: none;
+}
+.chihiro-bot-avatar.is-assist .chihiro-bot-badge {
+    background: var(--color-main);
+}
+.chihiro-bot-avatar.is-auto .chihiro-bot-badge {
+    background: #e08a1e;
+}
+#base-app .friend-body.active .chihiro-bot-badge {
+    border-color: var(--color-main);
+}
+#base-app .friend-body.active .chihiro-bot-avatar.is-assist .chihiro-bot-badge {
+    background: #fff;
+    color: var(--color-main);
+}
+.chihiro-bot-badge.working {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 18px;
+    padding: 0 4px;
+    letter-spacing: 0;
+}
+.chihiro-bot-badge.working i {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: chihiro-bot-dot 1s infinite ease-in-out;
+}
+.chihiro-bot-badge.working i:nth-child(2) { animation-delay: 0.15s; }
+.chihiro-bot-badge.working i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chihiro-bot-dot {
+    0%, 80%, 100% { opacity: 0.28; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-1px); }
 }
 #base-app .friend-body > div {
     margin-left: 10px;
@@ -216,6 +302,10 @@ const muted = computed(() => isSessionMuted(props.data || {}))
     }
     #base-app .friend-body > div:nth-child(1) {
         display: none !important;
+    }
+    #base-app .friend-body > .chihiro-bot-avatar {
+        flex: none !important;
+        margin: 0 !important;
     }
     #base-app .friend-body img,
     #base-app .friend-body > svg {

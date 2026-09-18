@@ -27,6 +27,8 @@ export function createBotAuto({
   sendToPeer,
   fetchHistory,
   openSocket,
+  history,
+  activity,
   now = () => Date.now(),
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -145,34 +147,63 @@ export function createBotAuto({
     }
     const messages = historyToSuggestMessages(rows, selfUin)
     const decision = decideJoin({ type, messages })
-    if (!decision.join) return { skipped: 'join' }
+    if (!decision.join) {
+      history?.note?.({
+        accountId, type, peerId, trigger: 'auto', joinReason: decision.reason, skipped: 'join',
+        steps: [{ kind: 'skip', title: '未接话', detail: decision.reason }],
+      })
+      return { skipped: 'join' }
+    }
     const lastThem = [...messages].reverse().find((item) => item.role === 'them')
     const lastMessageId = lastThem?.id || ''
     if (!lastMessageId) return { skipped: 'empty' }
     if (!claim({ accountId, type, peerId, lastMessageId }).claimed) return { skipped: 'claimed' }
-    let result
+    activity?.begin?.(accountId, type, peerId)
     try {
-      result = await botSuggest.suggest({
-        accountId,
-        type,
-        peerId,
-        lastMessageId,
-        trigger: 'auto',
-        messages,
-      })
-    } catch (error) {
-      logError('bot-auto', 'suggest', error)
-      return { skipped: 'suggest' }
-    }
-    const text = pickAutoText(result)
-    if (!text) return { skipped: 'empty-draft' }
-    try {
-      await sendToPeer(accountId, { type, peerId, text })
-      log('bot-auto', `sent ${accountId} ${type}:${peerId}`)
-      return { sent: text, lastMessageId }
-    } catch (error) {
-      logError('bot-auto', 'send', error)
-      return { skipped: 'send' }
+      let result
+      try {
+        result = await botSuggest.suggest({
+          accountId,
+          type,
+          peerId,
+          lastMessageId,
+          trigger: 'auto',
+          messages,
+        })
+      } catch (error) {
+        logError('bot-auto', 'suggest', error)
+        history?.note?.({
+          accountId, type, peerId, lastMessageId, trigger: 'auto', joinReason: decision.reason, skipped: 'suggest',
+          steps: [{ kind: 'skip', title: '生成失败' }],
+        })
+        return { skipped: 'suggest' }
+      }
+      const text = pickAutoText(result)
+      if (!text) {
+        history?.note?.({
+          accountId, type, peerId, lastMessageId, trigger: 'auto', joinReason: decision.reason, skipped: 'empty-draft',
+          steps: [{ kind: 'skip', title: '没有可发内容' }],
+        })
+        return { skipped: 'empty-draft' }
+      }
+      try {
+        await sendToPeer(accountId, { type, peerId, text })
+        history?.note?.({
+          accountId, type, peerId, lastMessageId, trigger: 'auto', joinReason: decision.reason, sent: text,
+          steps: [{ kind: 'reply', title: '已发送', detail: text }],
+        })
+        log('bot-auto', `sent ${accountId} ${type}:${peerId}`)
+        return { sent: text, lastMessageId }
+      } catch (error) {
+        logError('bot-auto', 'send', error)
+        history?.note?.({
+          accountId, type, peerId, lastMessageId, trigger: 'auto', joinReason: decision.reason, skipped: 'send',
+          steps: [{ kind: 'skip', title: '发送失败' }],
+        })
+        return { skipped: 'send' }
+      }
+    } finally {
+      activity?.end?.(accountId, type, peerId)
     }
   }
 

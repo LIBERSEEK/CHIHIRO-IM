@@ -26,6 +26,18 @@
                 </label>
             </div>
             <div class="opt-item">
+                <div />
+                <div>
+                    <label for="opt-chihiro-bot-digest-max">{{ $t('未读总结最多条数') }}</label>
+                    <span>{{ $t('超过上限时只送最近若干条，避免总结过久') }}</span>
+                </div>
+                <select id="opt-chihiro-bot-digest-max" v-model.number="chihiroBotDigestMax" @change="saveChihiroBotDigestMax">
+                    <option :value="60">60</option>
+                    <option :value="120">120</option>
+                    <option :value="200">200</option>
+                </select>
+            </div>
+            <div class="opt-item">
                 <div :class="checkDefault('bubble_sort_user')" />
                 <div>
                     <label for="opt-function-bubble-sort-user">{{ $t('展开群助手') }}</label>
@@ -425,6 +437,7 @@
     import { dbClearImages, dbGetStats } from '@renderer/function/utils/localHistoryUtil'
     import { useSettingsStore } from '@renderer/state/settings'
     import { useAuthStore } from '@renderer/state/auth'
+    import { useSuggestStore } from '@/modules/assistant/suggest'
     import { useUIStore } from '@renderer/state/ui'
 
     const settingsStore = useSettingsStore()
@@ -438,6 +451,12 @@
     const chihiroBotNewDefault = ref(localStorage.getItem(BOT_DEFAULT_KEY) === '1')
     function saveChihiroBotDefault() {
         localStorage.setItem(BOT_DEFAULT_KEY, chihiroBotNewDefault.value ? '1' : '0')
+    }
+    const suggestStore = useSuggestStore()
+    const chihiroBotDigestMax = ref(suggestStore.digestMax)
+    function saveChihiroBotDigestMax() {
+        suggestStore.setDigestMax(chihiroBotDigestMax.value)
+        chihiroBotDigestMax.value = suggestStore.digestMax
     }
 
     const dbStats = ref<{ totalMessages: number; imageCount: number; imageCacheBytes: number; dbSizeBytes: number } | null>(null)

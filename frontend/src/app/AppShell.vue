@@ -6,6 +6,7 @@ import { SlidersHorizontal, Settings } from '@lucide/vue'
 import AccountProfilePop from '@/app/AccountProfilePop.vue'
 import ExternalSettingsDialog from '@/app/ExternalSettingsDialog.vue'
 import { useAssistantStore } from '@/modules/assistant/session'
+import { useSuggestStore } from '@/modules/assistant/suggest'
 import { useShellStore } from '@/stores/shell'
 import type { AccountContext, AccountId } from '@/contracts'
 import { applyTheme as applyShellTheme, cycleTheme as cycleShellTheme, onThemeChange, readThemeMode, watchSystemTheme, type ThemeMode } from '@/theme'
@@ -27,6 +28,7 @@ import {
 const labels = { light: '浅色', dark: '深色', system: '跟随系统' }
 const shell = useShellStore()
 const assistant = useAssistantStore()
+const suggest = useSuggestStore()
 const route = useRoute()
 const router = useRouter()
 const settingsOpen = ref(false)
@@ -203,7 +205,10 @@ async function bootstrapRuntime() {
     runtimeBootstrapped.value = true
     runtimeStream?.close()
     runtimeStream = startRuntimeStateStream(
-      (state) => shell.applyRuntimeState(state),
+      (state) => {
+        shell.applyRuntimeState(state)
+        suggest.applyRuntimeMarks(state)
+      },
       () => shell.refreshAccounts(),
     )
   }

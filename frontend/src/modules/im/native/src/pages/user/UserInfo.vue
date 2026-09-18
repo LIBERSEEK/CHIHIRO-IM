@@ -93,6 +93,7 @@
                     </div>
             </div>
             <BcTab v-if="chat.show.type === 'group'"
+                ref="infoTab"
                 class="chat-info-tab">
                 <div :name="$t('成员')">
                     <div class="search-view">
@@ -122,7 +123,7 @@
                         </div>
                     </RecycleScroller>
                 </div>
-                <div :name="$t('公告')">
+                <div id="info-pan-notices" :name="$t('公告')">
                     <div class="bulletins">
                         <BulletinBody
                             v-for="(item, index) in chat.info.group_notices ?? []"
@@ -235,7 +236,7 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 
 import { Connector } from '@renderer/function/connect'
 import { PopInfo, PopType } from '@renderer/function/base'
-import { computed, toRaw, ref, nextTick } from 'vue'
+import { computed, toRaw, ref, nextTick, onMounted, watch } from 'vue'
 import { delay } from '@renderer/function/utils/systemUtil'
 import { openLink, vEsc } from '@renderer/function/utils/appUtil'
 import { useAuthStore } from '@renderer/state/auth'
@@ -243,10 +244,12 @@ import { useContactStore } from '@renderer/state/contact'
 import { useChatStore } from '@renderer/state/chat'
 import { useUIStore } from '@renderer/state/ui'
 import {
+    BaseChatInfoElem,
     GroupMemberInfoElem,
     UserFriendElem,
     UserGroupElem,
 } from '@renderer/function/elements/information'
+import { preparePrivateChat } from '@chihiro/im-native/session-open'
 import { qqLevelToEmoji } from '@renderer/function/utils/msgUtil'
 
 defineOptions({ name: 'UserInfo' })
@@ -256,14 +259,26 @@ const contactStore = useContactStore()
 const chatStore = useChatStore()
 const uiStore = useUIStore()
 
+type ChatInfoTab = 'members' | 'notice' | 'files' | 'settings'
+
+const TAB_INDEX: Record<ChatInfoTab, number> = {
+    members: 0,
+    notice: 1,
+    files: 2,
+    settings: 3,
+}
+
 const props = defineProps<{
     tags: any
     chat: any
+    initialTab?: ChatInfoTab
 }>()
+
+const infoTab = ref<{ tabSelect: (index: number) => void } | null>(null)
 
 const emit = defineEmits<{
     close: []
-    startChat: []
+    startChat: [info?: BaseChatInfoElem]
 }>()
 
 const { t: $t } = i18n.global
@@ -579,41 +594,12 @@ function onChatInfoEsc() {
  * 发起聊天
  */
 function startChat(info: any) {
-    // 如果是自己的话就忽略
-    if (info.user_id != authStore.loginInfo.uin) {
-
-        // 检查这个人是不是好友
-        let chat = contactStore.userList.find(
-            (item: UserFriendElem & UserGroupElem) => {
-                return item.user_id == info.user_id
-            },
-        )
-        if (!chat) {
-            // 创建一个临时聊天
-            const user = {
-                user_id: info.user_id,
-                // 因为临时消息没有返回昵称
-                nickname:
-                    $t('临时会话'),
-                remark: info.user_id,
-                group_id: info.group_id,
-                group_name: '',
-            } as UserFriendElem & UserGroupElem
-            chat = user
-        }
-        contactStore.baseOnMsgList.set(Number(info.user_id), chat)
-        // 切换到这个聊天
-        nextTick(() => {
-            if (chat) {
-                const item = document.getElementById(
-                    'user-' + chat.user_id,
-                )
-                if (item) {
-                    item.click()
-                }
-            }
-        })
-    }
+    if (info.user_id == authStore.loginInfo.uin) return
+    emit('startChat', preparePrivateChat({
+        userId: Number(info.user_id),
+        nickname: info.card || info.nickname,
+        groupId: Number(props.chat.show.id),
+    }))
 }
 
 function moreConfig(info: any) {
@@ -655,6 +641,37 @@ function canEditMember(role: string) {
          && role !== 'owner') // 管理员不能编辑群主
     )
 }
+
+function selectTab(tab: ChatInfoTab = 'members') {
+    if (tab === 'notice') {
+        infoTab.value?.tabSelect(1)
+        return
+    }
+    infoTab.value?.tabSelect(TAB_INDEX[tab] ?? 0)
+}
+
+function applyInitialTab() {
+    if (props.initialTab === 'notice') selectTab('notice')
+    else if (props.initialTab && props.initialTab !== 'members') selectTab(props.initialTab)
+}
+
+function openMoreConfig(userId: number) {
+    const member = props.chat.info.group_members?.find((item: GroupMemberInfoElem) =>
+        Number(item.user_id) === Number(userId),
+    )
+    if (member) moreConfig(member)
+}
+
+onMounted(() => {
+    applyInitialTab()
+    nextTick(() => applyInitialTab())
+})
+
+watch(() => props.initialTab, (tab) => {
+    if (tab) nextTick(() => selectTab(tab))
+})
+
+defineExpose({ selectTab, moreConfig, openMoreConfig })
 </script>
 
 <style scoped>
@@ -786,6 +803,11 @@ function canEditMember(role: string) {
 .chat-info-pan {
     background: rgba(0, 0, 0, 0.38);
     z-index: 40;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
 }
 .chat-info-float-enter-active,
 .chat-info-float-leave-active {
@@ -803,10 +825,17 @@ function canEditMember(role: string) {
 .chat-info-float-enter-from .chat-info,
 .chat-info-float-leave-to .chat-info {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(0.96) !important;
+    transform: scale(0.96) !important;
 }
 .chat-info.ss-card,
 .chat-info {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    margin: 0 !important;
+    transform: none;
     width: min(420px, calc(100% - 48px)) !important;
     min-width: 0 !important;
     max-height: min(80%, 640px) !important;
@@ -1093,6 +1122,11 @@ function canEditMember(role: string) {
     border-radius: 10px !important;
     padding: 10px 12px !important;
 }
+.bulletins > div.base > div.body,
+.bulletins > div.base > div.body > span {
+    -webkit-user-select: text;
+    user-select: text;
+}
 .group-files {
     padding: 8px 12px;
 }
@@ -1280,17 +1314,18 @@ function canEditMember(role: string) {
         min-width: 0 !important;
         height: auto !important;
         max-height: 80% !important;
-        margin: 50vh 0 0 50% !important;
+        margin: 0 !important;
         bottom: auto !important;
-        transform: translate(-50%, -50%) !important;
+        transform: none !important;
         border-radius: 16px !important;
     }
     .chat-info-pan {
-        height: 100% !important;
+        inset: 0 !important;
+        height: auto !important;
     }
     .chat-info-float-enter-from .chat-info,
     .chat-info-float-leave-to .chat-info {
-        transform: translate(-50%, -50%) scale(0.96) !important;
+        transform: scale(0.96) !important;
     }
 }
 </style>

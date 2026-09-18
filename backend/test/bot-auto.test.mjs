@@ -6,9 +6,10 @@ function harness(t, account = {
   id: 'qq:10001',
   uin: '10001',
   botSessions: { 'private:20002': { enabled: true, mode: 'auto', configId: null } },
-}) {
+}, extras = {}) {
   const sent = []
   const suggested = []
+  const notes = []
   const sockets = []
   const timers = new Map()
   let nextTimer = 1
@@ -28,9 +29,10 @@ function harness(t, account = {
       },
     },
     sendToPeer: async (_id, body) => { sent.push(body) },
-    fetchHistory: async () => ([
+    history: extras.history || { note(fields) { notes.push(fields) } },
+    fetchHistory: extras.fetchHistory || (async () => ([
       { id: 'm1', user_id: '20002', text: '在吗', time: 20 },
-    ]),
+    ])),
     openSocket: (url) => {
       const socket = { url, close() {}, on() {}, addEventListener() {} }
       sockets.push(socket)
@@ -46,7 +48,7 @@ function harness(t, account = {
   })
   t.after(() => auto.shutdown())
   return {
-    auto, sent, suggested, sockets, account,
+    auto, sent, suggested, notes, sockets, account,
     fireTimers() {
       const pending = [...timers.values()]
       timers.clear()
@@ -79,6 +81,21 @@ test('unfocused auto session sends after the quiet window', async (t) => {
   assert.equal(h.sent[0].text, '我在的。')
   assert.equal(h.suggested[0].trigger, 'auto')
   assert.equal(h.suggested[0].lastMessageId, 'm1')
+  assert.equal(h.notes[0].sent, '我在的。')
+})
+
+test('group filler-only bursts are recorded as skipped join', async (t) => {
+  const h = harness(t, {
+    id: 'qq:10001',
+    uin: '10001',
+    botSessions: { 'group:9': { enabled: true, mode: 'auto', configId: null } },
+  }, {
+    fetchHistory: async () => ([{ id: 'm1', user_id: '20002', text: '哈哈', time: 20 }]),
+  })
+  const result = await h.auto.flushTurn('qq:10001', 'group', '9')
+  assert.equal(result.skipped, 'join')
+  assert.equal(h.notes[0].skipped, 'join')
+  assert.equal(h.sent.length, 0)
 })
 
 test('focused conversation does not start a background auto send', (t) => {

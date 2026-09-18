@@ -1,4 +1,5 @@
 import { computed, inject, provide, ref, type InjectionKey, type Ref, type ComputedRef } from 'vue'
+import { isChatBotSession, withoutChatBotSessions } from './is-chatbot-session'
 
 export interface AgentSession { session_id: string; display_name: string | null; updated_at?: string; project_id?: string | null }
 export interface AgentProject { project_id: string; title: string; emoji?: string; description?: string }
@@ -15,7 +16,7 @@ function unwrap<T>(payload: any): T { return payload?.data?.data ?? payload?.dat
 function createHttpClient(base: string, accountId?: string): AgentClient {
   const request = async (path: string, init?: RequestInit) => { const headers = new Headers(init?.headers); headers.set('Accept', 'application/json'); if (init?.body) headers.set('Content-Type', 'application/json'); if (accountId) headers.set('X-Chihiro-Account', accountId); const response = await fetch(`${base.replace(/\/$/, '')}${path}`, { ...init, headers }); if (!response.ok) throw new Error(`Agent API ${response.status}`); return response }
   return {
-    async listSessions() { return unwrap<AgentSession[]>(await (await request('/chat/sessions')).json()) ?? [] },
+    async listSessions() { return withoutChatBotSessions(unwrap<AgentSession[]>(await (await request('/chat/sessions')).json()) ?? []) },
     async createSession() { return unwrap<AgentSession>(await (await request('/chat/sessions/new', { method: 'POST' })).json()) },
     async deleteSession(id) { await request(`/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }) },
     async updateSession(id, patch) { await request(`/chat/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }) },
@@ -35,7 +36,7 @@ export function createAgentWorkspace(options: AgentWorkspaceOptions = {}, client
   const sessions = ref<AgentSession[]>([]); const projects = ref<AgentProject[]>([]); const activeSessionId = ref(''); const messages = ref<AgentMessage[]>([]); const loading = ref(false); const sending = ref(false); const error = ref(''); const draft = ref(''); const selectedModel = ref(''); const models = ref<string[]>([]); let abort: AbortController | null = null
   const activeSession = computed(() => sessions.value.find((item) => item.session_id === activeSessionId.value) ?? null)
   async function selectSession(id: string) { activeSessionId.value = id; loading.value = true; error.value = ''; try { messages.value = await client.getMessages(id) } catch (cause) { error.value = cause instanceof Error ? cause.message : '无法加载会话' } finally { loading.value = false } }
-  async function load() { loading.value = true; error.value = ''; try { const [nextSessions, nextProjects] = await Promise.all([client.listSessions(), client.listProjects()]); sessions.value = nextSessions; projects.value = nextProjects; if (!activeSessionId.value && nextSessions[0]) await selectSession(nextSessions[0].session_id) } catch (cause) { error.value = cause instanceof Error ? cause.message : '无法连接 Agent 服务' } finally { loading.value = false } }
+  async function load() { loading.value = true; error.value = ''; try { const [nextSessions, nextProjects] = await Promise.all([client.listSessions(), client.listProjects()]); const visible = nextSessions.filter((item) => !isChatBotSession(item)); sessions.value = visible; projects.value = nextProjects; if (!activeSessionId.value && visible[0]) await selectSession(visible[0].session_id) } catch (cause) { error.value = cause instanceof Error ? cause.message : '无法连接 Agent 服务' } finally { loading.value = false } }
   async function newSession() { const session = await client.createSession(); sessions.value = [session, ...sessions.value]; await selectSession(session.session_id) }
   async function deleteSession(id: string) { await client.deleteSession(id); sessions.value = sessions.value.filter((item) => item.session_id !== id); if (activeSessionId.value === id) { activeSessionId.value = ''; messages.value = []; if (sessions.value[0]) await selectSession(sessions.value[0].session_id) } }
   async function renameSession(id: string, title: string) { const display_name = title.trim(); if (!display_name) return; await client.updateSession(id, { display_name }); const session = sessions.value.find((item) => item.session_id === id); if (session) session.display_name = display_name }

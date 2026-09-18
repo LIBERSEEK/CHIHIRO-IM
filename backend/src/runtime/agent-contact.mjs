@@ -100,10 +100,14 @@ export function createContactApi({
         }
         const waitedMs = await waitForSlot(accountId)
         try {
-          const result = await napcatAction(accountId, 'join_group', {
+          const params = {
             group_id: Number(groupId),
             comment: String(body.comment || body.message || '')
-          })
+          }
+          if (body.answer || body.joinGroupAnswer) {
+            params.answer = String(body.answer || body.joinGroupAnswer || '')
+          }
+          const result = await napcatAction(accountId, 'join_group', params)
           return { ok: true, action, accountId, groupId, already: false, waitedMs, result: result || {} }
         } finally {
           markSubmitted(accountId)

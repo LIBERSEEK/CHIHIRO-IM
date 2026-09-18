@@ -52,6 +52,7 @@
 <script setup lang="ts">
     import { onBeforeUnmount, onMounted, ref } from 'vue'
     import { i18n, navigateNativeIm } from '@chihiro/im-native/host'
+    import { openAddContactSearch } from '@chihiro/im-native/add-contact'
     import { PopInfo, PopType } from '@renderer/function/base'
 
     defineOptions({ name: 'UserListHead' })
@@ -86,7 +87,7 @@
 
     function addFriendOrGroup() {
         closePlus()
-        new PopInfo().add(PopType.INFO, $t('暂不支持加好友/群'), true)
+        openAddContactSearch()
     }
 
     function goMessages() {

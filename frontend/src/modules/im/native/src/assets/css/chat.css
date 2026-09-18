@@ -942,6 +942,10 @@ input {
     background: var(--color-card-1);
 }
 .bulletins > div.base {
+    cursor: default;
+}
+.bulletins > div.base > header,
+.bulletins > div.base > span {
     cursor: pointer;
 }
 .bulletins > div.base > span {
@@ -978,10 +982,14 @@ input {
     overflow: hidden;
     max-height: 6rem;
     display: flex;
+    -webkit-user-select: text;
+    user-select: text;
+    cursor: pointer;
 }
 .bulletins > div.base > div.body.all {
     max-height: unset;
     flex-flow: column;
+    cursor: text;
 }
 .bulletins > div.base > div.body > .img {
     height: 6rem;
@@ -998,6 +1006,8 @@ input {
 
 .bulletins > div.base > div.body > span {
     white-space: pre-line;
+    -webkit-user-select: text;
+    user-select: text;
 }
 .bulletins > div.base > div.body > span > a {
     color: var(--color-main) !important;

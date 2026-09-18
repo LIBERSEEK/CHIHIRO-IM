@@ -425,6 +425,7 @@ import Option from '@renderer/function/option'
 import markdownit from 'markdown-it'
 
 import { MsgBodyFuns as ViewFuns } from '@renderer/function/model/msg-body'
+import { linkifyMessageText } from '@chihiro/im-native/msg-text'
 import { watch, onMounted, nextTick, provide, inject, useTemplateRef, ref, toRaw, computed } from 'vue'
 import SuggestBar from '@/modules/assistant/SuggestBar.vue'
 import { useSuggestStore } from '@/modules/assistant/suggest'
@@ -826,10 +827,10 @@ async function parseText(index: number) {
         return
     }
 
-    const reg = /(http|https):\/\/[\w\-_]+(\.[\w\-_]+)+([\w\-.,@?^=%&:/~+#]*[\w\-@?^=%&/~+#])?/gi
-    text = text.replaceAll(reg, '<a href="" data-link="$&" onclick="return false">$&</a>')
-    const linkList = text.match(reg)
-    if (linkList !== null && !gotLink.value && !isDebugMsg) {
+    const linked = linkifyMessageText(text)
+    text = linked.html
+    const linkList = linked.urls
+    if (linkList.length > 0 && !gotLink.value && !isDebugMsg) {
         queueMicrotask(async() => {
             gotLink.value = true
             const fistLink = linkList[0]

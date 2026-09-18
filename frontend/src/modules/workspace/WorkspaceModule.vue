@@ -25,6 +25,7 @@ import UserSystemNotice from '../im/native/src/pages/user/UserSystemNotice.vue'
 import UserOptions from '../im/native/src/pages/user/UserOptions.vue'
 import UserViewer from '../im/native/src/components/user/UserViewerCom.vue'
 import UserTooltips from '../im/native/src/components/user/tooltip/UserTooltips.vue'
+import UserAddContactPan from '../im/native/src/components/user/UserAddContactPan.vue'
 import UserFileManager, { panelVisible } from '../im/native/src/components/user/UserFileManager.vue'
 import { setNativeViewerHost } from '../im/native/viewer'
 import AgentEntry from '../agent/AgentEntry.vue'
@@ -201,10 +202,10 @@ function openContactChat(info: BaseChatInfoElem) {
   changeChat(info)
 }
 
-function sendToContact() {
-  const info = chat.chatInfo.show
-  openContactChat(info)
-  loadHistory(info)
+function sendToContact(info?: BaseChatInfoElem) {
+  const target = info?.id ? info : chat.chatInfo.show
+  openContactChat(target)
+  loadHistory(target)
 }
 
 function closeContactProfile() {
@@ -316,6 +317,7 @@ onBeforeUnmount(() => {
       <UserFileManager v-if="panelVisible" />
       <UserViewer ref="viewer" />
       <UserTooltips />
+      <UserAddContactPan @start-chat="sendToContact" />
     </div>
     <Teleport to="#chihiro-im-overlays">
       <div v-if="modal" class="pop-box" role="dialog" aria-modal="true" :aria-label="modal.title">

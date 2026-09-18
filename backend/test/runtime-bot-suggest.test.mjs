@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import test from 'node:test'
 import { createRuntime } from '../src/runtime/api.mjs'
 import { createBotController, normalizeBotSession } from '../src/runtime/bot.mjs'
-import { parseSuggestReplies, collectSsePlain, pickAutoText } from '../src/runtime/bot-suggest.mjs'
+import { parseSuggestReplies, collectSsePlain, pickAutoText, buildPrompt, suggestSessionId, parseDigestPoints, buildDigestPrompt, digestSessionId, clipDigestMessages, DIGEST_MAX_MESSAGES } from '../src/runtime/bot-suggest.mjs'
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -19,6 +19,40 @@ test('legacy boolean sessions normalize without enabling the adapter', () => {
   assert.deepEqual(normalizeBotSession({ enabled: true, mode: 'auto', configId: 'sales' }), {
     enabled: true, mode: 'auto', configId: 'sales',
   })
+})
+
+test('one IM session maps to one ChatBot conversation id and incremental later turns', () => {
+  assert.equal(suggestSessionId('qq:10001', 'private', '20002'), 'suggest:qq:10001:private:20002')
+  const first = buildPrompt([{ role: 'them', text: '在吗', name: 'Raven' }], 'private')
+  assert.match(first, /当成一次说话来回/)
+  assert.match(first, /本轮待回/)
+  const next = buildPrompt([{ role: 'them', text: '买吗', name: 'Raven' }], 'private', '', true)
+  assert.match(next, /这是同一场对话的下一轮/)
+  assert.match(next, /本轮待回/)
+  assert.doesNotMatch(next, /当成一次说话来回/)
+})
+
+test('digest points keep only known message ids', () => {
+  assert.equal(digestSessionId('qq:1', 'group', '9'), 'suggest:qq:1:group:9:digest')
+  assert.equal(DIGEST_MAX_MESSAGES, 200)
+  const many = Array.from({ length: 90 }, (_, i) => ({ id: `m${i}`, role: 'them', text: `第${i}条`, name: '小默' }))
+  assert.equal(clipDigestMessages(many).length, 90)
+  assert.equal(clipDigestMessages(many, 60).length, 60)
+  assert.equal(clipDigestMessages(many, 999).length, 90)
+  assert.equal(clipDigestMessages(many, 60)[0].id, 'm30')
+  const truncated = buildDigestPrompt(many, 60)
+  assert.match(truncated, /未读共 90 条，以下为最近 60 条/)
+  assert.match(buildDigestPrompt([{ id: 'm1', role: 'them', text: '5.6不降智了?', name: '小默' }]), /\[id=m1\]/)
+  const parsed = parseDigestPoints(JSON.stringify({
+    summary: '群里在问模型',
+    points: [
+      { text: '小默问 5.6 不降智了', messageId: 'm1' },
+      { text: '编造的一条', messageId: 'nope' },
+    ],
+  }), [{ id: 'm1', role: 'them', text: '5.6不降智了?', name: '小默' }])
+  assert.equal(parsed.summary, '群里在问模型')
+  assert.equal(parsed.points[0].messageId, 'm1')
+  assert.equal(parsed.points[1].messageId, '')
 })
 
 test('pickAutoText prefers summary then highest score', () => {
@@ -146,7 +180,7 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.equal(f.astrbotRequests[0].auth, 'Bearer dash-token')
   const chatBody = JSON.parse(f.astrbotRequests[0].body)
   assert.equal(chatBody.username, 'chihiro-suggest:qq:10001')
-  assert.equal(chatBody.session_id, 'suggest:qq:10001:private:20002:m1')
+  assert.equal(chatBody.session_id, 'suggest:qq:10001:private:20002')
   assert.equal(chatBody.enable_streaming, false)
   assert.equal(chatBody.config_id, undefined)
   assert.match(chatBody.message, /them\(Raven\): 在吗/)
@@ -154,6 +188,7 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.match(chatBody.message, /连续发言可能来自不同的人/)
   assert.match(chatBody.message, /本轮待回/)
   assert.doesNotMatch(chatBody.message, /检索依据（内部/)
+  assert.doesNotMatch(chatBody.message, /这是同一场对话的下一轮/)
 
   await fetch(`${f.base}/api/runtime/bot/session`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -165,6 +200,47 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.equal((await autoOn.json()).replies[0].text, '好的，我买')
   const autoChat = JSON.parse(f.astrbotRequests.at(-1).body)
   assert.equal(autoChat.config_id, 'sales')
+  assert.equal(autoChat.session_id, 'suggest:qq:10001:private:20002')
+  assert.match(autoChat.message, /这是同一场对话的下一轮/)
+  assert.doesNotMatch(autoChat.message, /当成一次说话来回/)
+
+  const history = await fetch(`${f.base}/api/runtime/bot/history?accountId=qq:10001&type=private&peerId=20002`)
+  assert.equal(history.status, 200)
+  const items = (await history.json()).items
+  assert.equal(items[0].replies[0].text, '好的，我买')
+  assert.equal(items[0].inProgress, false)
+  assert.ok(items[0].steps.some((step) => step.title === '手动生成建议' || step.title === '开始处理本轮' || step.title.includes('建议')))
+  const state = await (await fetch(`${f.base}/api/runtime/state`)).json()
+  assert.deepEqual(state.botActivity, {})
+})
+
+test('digest trigger summarizes unread without enabling ChatBot', async (t) => {
+  const f = await fixture(t)
+  f.setAstrbotReply({
+    status: 200,
+    body: 'data: {"type":"plain","data":"{\\"summary\\":\\"群里在问降智\\",\\"points\\":[{\\"text\\":\\"小默问5.6不降智了\\",\\"messageId\\":\\"m9\\"}]}"}\n\n',
+  })
+  const response = await fetch(`${f.base}/api/runtime/bot/suggest`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      accountId: 'qq:10001', type: 'group', peerId: '2159', lastMessageId: 'm9', trigger: 'digest',
+      messages: [{ id: 'm9', role: 'them', text: '5.6不降智了?', name: '小默' }],
+    }),
+  })
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.equal(body.summary, '群里在问降智')
+  assert.equal(body.points[0].messageId, 'm9')
+  assert.equal(body.replies.length, 0)
+  const chat = JSON.parse(f.astrbotRequests.at(-1).body)
+  assert.equal(chat.session_id, 'suggest:qq:10001:group:2159:digest')
+  assert.match(chat.message, /事件要点/)
+  assert.doesNotMatch(chat.message, /当成一次说话来回/)
+  const history = await fetch(`${f.base}/api/runtime/bot/history?accountId=qq:10001&type=group&peerId=2159`)
+  const items = (await history.json()).items
+  assert.equal(items[0].trigger, 'digest')
+  assert.equal(items[0].points[0].messageId, 'm9')
+  assert.ok(items[0].steps.some((step) => step.title.includes('要点') || step.title.includes('未读')))
 })
 
 test('suggest failures return an empty list and configs proxy AstrBot', async (t) => {
@@ -172,10 +248,20 @@ test('suggest failures return an empty list and configs proxy AstrBot', async (t
   f.setAstrbotReply({ status: 500, body: 'nope' })
   const failed = await fetch(`${f.base}/api/runtime/bot/suggest`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountId: 'qq:10001', type: 'private', peerId: '1', lastMessageId: 'x', trigger: 'menu', messages: [] }),
+    body: JSON.stringify({ accountId: 'qq:10001', type: 'private', peerId: '1', lastMessageId: 'x', trigger: 'menu', messages: [{ role: 'them', text: '在吗' }] }),
   })
   assert.equal(failed.status, 200)
   assert.deepEqual(await failed.json(), { lastMessageId: 'x', replies: [], summary: '' })
+
+  f.setAstrbotReply({ status: 200, body: 'data: {"type":"plain","data":"{\\"replies\\":[{\\"id\\":\\"1\\",\\"text\\":\\"好的，我买\\",\\"score\\":0.82}]}"}\n\n' })
+  const recovered = await fetch(`${f.base}/api/runtime/bot/suggest`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accountId: 'qq:10001', type: 'private', peerId: '1', lastMessageId: 'y', trigger: 'menu', messages: [{ role: 'them', text: '在吗' }] }),
+  })
+  assert.equal(recovered.status, 200)
+  const recoveredChat = JSON.parse(f.astrbotRequests.at(-1).body)
+  assert.match(recoveredChat.message, /当成一次说话来回/)
+  assert.doesNotMatch(recoveredChat.message, /这是同一场对话的下一轮/)
 
   f.setAstrbotPath('/api/v1/configs', {
     status: 200,

@@ -6,9 +6,8 @@
 -->
 
 <template>
-    <div class="base"
-        @click="showAll = !showAll">
-        <header>
+    <div class="base">
+        <header @click="toggleExpand">
             <font-awesome-icon :icon="['fas', 'bookmark']" />
             <span>{{ $t('公告') }}</span>
             <div style="flex: 1" />
@@ -20,11 +19,12 @@
             }).format(data.time) }}</span>
         </header>
         <div :id="'bulletins-msg-' + index"
-            :class="'body' + (!showAll ? '' : ' all')">
+            :class="'body' + (!showAll ? '' : ' all')"
+            @click.stop="onBodyClick">
             <span
                 style="margin-right: auto;margin-bottom: auto;"
                 @click="textClick"
-                v-html="parseText(data.content[0])" />
+                v-html="parseText(noticeBody)" />
             <img v-if="data.img"
                 :src="data.img.src"
                 :class="{
@@ -33,8 +33,8 @@
                 }"
                 @click.stop="imgClick(data.img)">
         </div>
-        <span v-show="needShow && !showAll">{{ $t('点击展开') }}</span>
-        <div class="info">
+        <span v-show="needShow && !showAll" @click.stop="showAll = true">{{ $t('点击展开') }}</span>
+        <div class="info" @click.stop>
             <img :src="'https://q1.qlogo.cn/g?b=qq&s=0&nk=' + data.sender">
             <a>{{
                 chatStore.chatInfo.info.group_members.filter((item) => {
@@ -54,10 +54,11 @@
 
 <script lang="ts" setup>
     import xss from 'xss'
-    import { ref, onMounted, nextTick, inject } from 'vue'
+    import { ref, computed, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
     import { openLink } from '@renderer/function/utils/appUtil'
     import { getTrueLang } from '@renderer/function/utils/systemUtil'
     import { i18n } from '@chihiro/im-native/host'
+    import { decodeNoticeHtml, noticeRawText } from '@chihiro/im-native/notice-text'
     import { Img } from '@renderer/function/model/img'
     import { useChatStore } from '@renderer/state/chat'
 
@@ -76,31 +77,48 @@
     const trueLang = getTrueLang()
     const showAll = ref(false)
     const needShow = ref(true)
+    const noticeBody = computed(() => noticeRawText(props.data))
+    let overflowObserver: IntersectionObserver | null = null
+
+    function measureOverflow() {
+        const pan = document.getElementById('bulletins-msg-' + props.index)
+        if (!pan) return false
+        const style = getComputedStyle(pan)
+        if (style.display === 'none') return false
+        const maxHeight = parseFloat(style.maxHeight)
+        if (!Number.isFinite(maxHeight) || maxHeight <= 0) {
+            needShow.value = false
+            return true
+        }
+        needShow.value = pan.scrollHeight > maxHeight + 1
+        return pan.offsetHeight > 0
+    }
 
     onMounted(() => {
         nextTick(() => {
-            const tab1 = document.getElementById('info-pan-notices')
-            const tab2 = document.getElementById('info-pan-mumber')
-            const pan = document.getElementById(
-                'bulletins-msg-' + props.index,
-            )
-            if (pan && tab1 && tab2) {
-                // PS：display none 不渲染无法获取实际高度
-                tab1.click()
-                const maxHeight = Number(
-                    getComputedStyle(pan).maxHeight.replace('px', ''),
-                )
-                const height = pan.offsetHeight
-                tab2.click()
-                needShow.value = height == maxHeight
-            }
+            if (measureOverflow()) return
+            const pan = document.getElementById('bulletins-msg-' + props.index)
+            if (!pan || typeof IntersectionObserver === 'undefined') return
+            overflowObserver = new IntersectionObserver((entries) => {
+                if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
+                    measureOverflow()
+                    overflowObserver?.disconnect()
+                    overflowObserver = null
+                }
+            })
+            overflowObserver.observe(pan)
         })
     })
 
+    onBeforeUnmount(() => {
+        overflowObserver?.disconnect()
+        overflowObserver = null
+    })
+
     function parseText(text: string) {
-        text = text.replaceAll('\r', '\n')
+        text = decodeNoticeHtml(text)
+            .replaceAll('\r', '\n')
             .replaceAll('\n\n', '\n')
-            .replaceAll('&#10;', '\n')
         text = xss(text, { whiteList: { a: ['href', 'target'] } })
         // 匹配链接
         const reg = /(http|https):\/\/[\w\-_]+(\.[\w\-_]+)+([\w\-.,@?^=%&:/~+#]*[\w\-@?^=%&/~+#])?/gi
@@ -108,12 +126,21 @@
         return text
     }
 
+    function toggleExpand() {
+        showAll.value = !showAll.value
+    }
+
+    function onBodyClick(event: MouseEvent) {
+        const target = event.target as HTMLElement
+        if (target.dataset?.link) return
+        if (!showAll.value) showAll.value = true
+    }
+
     function textClick(event: Event) {
         const target = event.target as HTMLElement
         if (target.dataset.link) {
-            // 点击了链接
-            const link = target.dataset.link
-            openLink(link)
+            event.stopPropagation()
+            openLink(target.dataset.link)
         }
     }
 
@@ -127,3 +154,22 @@
         }
     }
 </script>
+
+<style>
+.bulletins > div.base > header,
+.bulletins > div.base > span {
+    cursor: pointer;
+}
+.bulletins > div.base > div.body,
+.bulletins > div.base > div.body > span {
+    -webkit-user-select: text;
+    user-select: text;
+}
+.bulletins > div.base > div.body:not(.all) {
+    cursor: pointer;
+}
+.bulletins > div.base > div.body.all,
+.bulletins > div.base > div.body.all > span {
+    cursor: text;
+}
+</style>

@@ -1,10 +1,28 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createHostedAgentNavigation, routeForHostedAgent } from './src/navigation'
+import { createHostedAgentNavigation, hostedAgentIdFromLocation, routeForHostedAgent } from './src/navigation'
 
 describe('agent native navigation', () => {
   it('keeps hosted agent sessions inside the unified IM workbench route', () => {
     expect(routeForHostedAgent()).toEqual({ path: '/im', query: { tab: 'workbench' } })
     expect(routeForHostedAgent('session-1')).toEqual({ path: '/im', query: { tab: 'workbench', agent: 'session-1' } })
+  })
+
+  it('does not keep the models page after workspace already selected a conversation', () => {
+    expect(hostedAgentIdFromLocation({
+      queryAgent: 'models',
+      workspacePane: 'agent',
+      workspaceSessionId: 'session-1',
+    })).toBe('session-1')
+    expect(hostedAgentIdFromLocation({
+      queryAgent: 'models',
+      workspacePane: 'agent',
+      workspaceSessionId: 'models',
+    })).toBe('models')
+    expect(hostedAgentIdFromLocation({
+      queryAgent: 'session-1',
+      workspacePane: 'agent',
+      workspaceSessionId: 'models',
+    })).toBe('session-1')
   })
 
   it('mirrors hosted navigation into workspace state before pushing the route', async () => {

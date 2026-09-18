@@ -1,5 +1,6 @@
 // chihiro-recent-contact-unread
 import original, { plugin_init as ssqqInit } from './index.ssqq.mjs'
+import { joinGroupCall, mapSearchGroup, mapSearchUser } from './contact-search.mjs'
 
 const WRAP_MARK = 'chihiro-recent-contact-unread'
 const UNREAD_KEYS = [
@@ -156,6 +157,99 @@ function idOf(payload, ...keys) {
   return ''
 }
 
+function isMember(groups, groupId) {
+  if (!Array.isArray(groups)) return false
+  return groups.some((row) => String(row.groupCode ?? row.group_id ?? '') === String(groupId))
+}
+
+async function lookupUser(core, userId) {
+  if (!/^\d+$/.test(userId) || /^0+$/.test(userId)) return null
+  try {
+    const uid = await core.apis.UserApi.getUidByUinV2(userId)
+    if (!uid) return null
+    let already = false
+    try {
+      already = !!(await core.apis.FriendApi.isBuddy(uid))
+    } catch {
+      already = false
+    }
+    let info = { uin: userId, user_id: userId }
+    try {
+      const detail = await core.apis.UserApi.getUserDetailInfo(uid, true)
+      if (detail && typeof detail === 'object') Object.assign(info, detail)
+    } catch {
+      try {
+        const byUin = await core.apis.UserApi.getUserDetailInfoByUin(userId)
+        const detail = byUin?.detail
+        if (detail?.simpleInfo) {
+          Object.assign(info, detail.simpleInfo.baseInfo, detail.simpleInfo.coreInfo, detail.commonExt)
+        }
+      } catch {
+        // Keep the QQ number even if the profile fetch fails.
+      }
+    }
+    return mapSearchUser(info, already)
+  } catch {
+    return null
+  }
+}
+
+async function searchGroupHits(core, keyword) {
+  const key = String(keyword || '').trim()
+  if (!key) return []
+  const wrapper = core.eventWrapper
+  if (typeof wrapper?.callNormalEventV2 === 'function') {
+    try {
+      const [, ret] = await wrapper.callNormalEventV2(
+        'NodeIKernelSearchService/searchGroup',
+        'NodeIKernelSearchListener/onSearchGroupResult',
+        [{
+          keyWords: key,
+          groupNum: 25,
+          exactSearch: false,
+          penetrate: '',
+        }],
+        (r) => !r || r.result === 0 || r.result === undefined,
+        (params) => Array.isArray(params?.groupInfos),
+        1,
+        5000,
+      )
+      if (Array.isArray(ret?.groupInfos) && ret.groupInfos.length) return ret.groupInfos
+    } catch {
+      // Fall through to the exact group-number lookup.
+    }
+  }
+  if (/^\d+$/.test(key) && typeof core.apis?.GroupApi?.searchGroup === 'function') {
+    try {
+      const found = await core.apis.GroupApi.searchGroup(key)
+      return found ? [found] : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+async function searchContact(core, payload) {
+  const keyword = String(payload.keyword || payload.key || payload.user_id || payload.group_id || '').trim()
+  if (!keyword) throw new Error('invalid_keyword')
+  const [user, hits, groups] = await Promise.all([
+    /^\d+$/.test(keyword) ? lookupUser(core, keyword) : Promise.resolve(null),
+    searchGroupHits(core, keyword),
+    Promise.resolve(core.apis.GroupApi.getGroups(false)).catch(() => []),
+  ])
+  const seen = new Set()
+  const mapped = []
+  for (const hit of hits) {
+    const group = mapSearchGroup(hit, false)
+    if (!group || seen.has(group.group_id)) continue
+    seen.add(group.group_id)
+    group.already = isMember(groups, group.group_id)
+    mapped.push(group)
+  }
+  return { keyword, user, groups: mapped }
+}
+
 async function addFriend(core, payload) {
   const userId = idOf(payload, 'user_id', 'userId')
   if (!/^\d+$/.test(userId) || /^0+$/.test(userId)) throw new Error('invalid_user')
@@ -171,16 +265,11 @@ async function addFriend(core, payload) {
   return { already: false, user_id: userId, uid, submitted: true, result: result ?? null }
 }
 
-function searchInfo(found) {
-  if (!found || typeof found !== 'object') return {}
-  return found.searchGroupInfo && typeof found.searchGroupInfo === 'object' ? found.searchGroupInfo : found
-}
-
 async function joinGroup(core, payload) {
   const groupId = idOf(payload, 'group_id', 'groupId')
   if (!/^\d+$/.test(groupId) || /^0+$/.test(groupId)) throw new Error('invalid_group')
   const groups = await core.apis.GroupApi.getGroups(false)
-  if (Array.isArray(groups) && groups.some((row) => String(row.groupCode ?? row.group_id ?? '') === groupId)) {
+  if (isMember(groups, groupId)) {
     return { already: true, group_id: groupId }
   }
   let found = null
@@ -189,28 +278,31 @@ async function joinGroup(core, payload) {
   } catch {
     found = null
   }
-  const info = searchInfo(found)
-  const auth = String(info.joinGroupAuth || '')
-  const comment = String(payload.comment || payload.message || payload.msg || '')
+  const call = joinGroupCall(found, { ...payload, group_id: groupId })
+  if (!call.groupCode) throw new Error('群不存在')
+  if (call.option === 3) throw new Error('该群不允许加入')
   const groupService = core.context.session.getGroupService()
   if (typeof groupService?.joinGroup !== 'function') throw new Error('当前内核没有入群接口')
   let result
   try {
     result = await Promise.resolve(groupService.joinGroup({
-      groupCode: groupId,
-      joinGroupAuth: auth,
-      msg: comment,
-      joinGroupAnswer: comment,
+      groupCode: call.groupCode,
+      joinGroupAuth: call.joinGroupAuth,
+      msg: call.msg,
+      joinGroupAnswer: call.joinGroupAnswer,
     }))
   } catch {
-    result = await Promise.resolve(groupService.joinGroup(groupId, auth))
+    result = await Promise.resolve(groupService.joinGroup(call.groupCode, call.joinGroupAuth))
+  }
+  if (result && typeof result === 'object' && result.result != null && Number(result.result) !== 0) {
+    throw new Error(result.errMsg || result.msg || '申请失败')
   }
   return {
     already: false,
     group_id: groupId,
     submitted: true,
-    name: info.groupName || found?.groupName || '',
-    result: result ?? null
+    name: mapSearchGroup(found, false)?.name || '',
+    result: result ?? null,
   }
 }
 
@@ -221,6 +313,7 @@ function wrapContactActions(ctx) {
     return
   }
   const extras = {
+    search_contact: makeAction((payload) => searchContact(core, payload)),
     add_friend: makeAction((payload) => addFriend(core, payload)),
     join_group: makeAction((payload) => joinGroup(core, payload)),
   }
@@ -234,7 +327,7 @@ function wrapContactActions(ctx) {
   }
   wrapped[CONTACT_MARK] = true
   ctx.actions.get = wrapped
-  ctx.logger?.info?.('[chihiro] contact actions registered: add_friend, join_group')
+  ctx.logger?.info?.('[chihiro] contact actions registered: search_contact, add_friend, join_group')
 }
 
 export async function plugin_init(ctx) {

@@ -7,6 +7,8 @@ import { createAstrbotRuntime } from './astrbot.mjs'
 import { createBotController } from './bot.mjs'
 import { createBotSuggest } from './bot-suggest.mjs'
 import { createBotAuto } from './bot-auto.mjs'
+import { createBotActivity } from './bot-activity.mjs'
+import { createBotHistory } from './bot-history.mjs'
 import { createAgentController } from './agent.mjs'
 import { createChatuiProxy } from './chatui.mjs'
 import { createCustomerInsights } from '../core/customer-insights.mjs'
@@ -26,11 +28,17 @@ export function createRuntime({ root, cfg, services = {} }) {
   const customers = services.customers || createCustomerInsights({ root })
   const groupIntelligence = services.groupIntelligence || createGroupIntelligence({ root })
   const bot = services.bot || createBotController({ store, qq, astrbot, cfg })
-  const botSuggest = services.botSuggest || createBotSuggest({ store, qq, astrbot })
+  const botActivity = services.botActivity || createBotActivity({ touch: () => qq.touch?.() })
+  const botHistory = services.botHistory || createBotHistory({ filePath: path.join(dataDir, 'bot-history.json') })
+  const botSuggest = services.botSuggest || createBotSuggest({
+    store, qq, astrbot, activity: botActivity, history: botHistory,
+  })
   const botAuto = services.botAuto || createBotAuto({
     store,
     qq,
     botSuggest,
+    history: botHistory,
+    activity: botActivity,
     sendToPeer: (accountId, body) => agent.sendToPeer(accountId, body),
     fetchHistory: async (accountId, type, peerId) => {
       const observed = await agent.observe({ kind: 'messages', accountId, type, peerId, count: 24 })
@@ -49,6 +57,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     snap.agent = {
       pendingByAccount: agent.pendingCounts()
     }
+    snap.botActivity = botActivity.snapshot()
     return snap
   }
 
@@ -298,6 +307,14 @@ export function createRuntime({ root, cfg, services = {} }) {
         logError('api', 'bot.suggest', e)
         return json(res, { lastMessageId: String(body?.lastMessageId || ''), replies: [] })
       }
+    }
+
+    if (p === '/api/runtime/bot/history' && method === 'GET') {
+      const accountId = url.searchParams.get('accountId') || ''
+      const type = url.searchParams.get('type') === 'group' ? 'group' : 'private'
+      const peerId = url.searchParams.get('peerId') || ''
+      if (!accountId || !peerId) return json(res, { error: 'missing_id' }, 400)
+      return json(res, { items: botHistory.list(accountId, type, peerId) })
     }
 
     if (p === '/api/runtime/bot/configs' && method === 'GET') {

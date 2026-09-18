@@ -12,6 +12,8 @@ import {
   botConversationKey,
   AUTO_SEND_MS,
   PRIVATE_QUIET_MS,
+  clampDigestMax,
+  DIGEST_MAX_DEFAULT,
   type SuggestContext,
 } from './suggest'
 
@@ -61,6 +63,24 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+it('merges ChatBot session marks across accounts and surfaces working state', () => {
+  const store = useSuggestStore()
+  store.applySnapshot(snapshot(a.accountId, { 'private:20001': { enabled: true, mode: 'assist' } }), a.accountId)
+  store.applySnapshot(snapshot(b.accountId, { 'group:30001': { enabled: true, mode: 'auto' } }), b.accountId)
+  expect(store.listMark('private', '20001')).toEqual({ mode: 'assist', working: false })
+  expect(store.listMark('group', '30001')).toBeNull()
+  store.applyRuntimeMarks({
+    accounts: { accounts: [
+      { id: a.accountId, botSessions: { 'private:20001': { enabled: true, mode: 'auto' } } },
+      { id: b.accountId, botSessions: { 'group:30001': { enabled: true, mode: 'auto' } } },
+    ] },
+    botActivity: { [`${a.accountId}:private:20001`]: 'working' },
+  })
+  expect(store.listMark('private', '20001')).toEqual({ mode: 'auto', working: true })
+  useShellStore().selectAccount(accountId(b.accountId))
+  expect(store.listMark('group', '30001')).toEqual({ mode: 'auto', working: false })
 })
 
 it('normalizes legacy boolean sessions and ignores empty text', () => {
@@ -174,6 +194,59 @@ it('stores bubble options and a separate composer summary', async () => {
   expect(store.replies.map(item => item.text)).toEqual(['还没用过，你觉得呢？', '听起来挺有意思'])
   expect(store.summary).toBe('我觉得还不错，刚开始用。')
   expect(store.composerReply?.text).toBe('我觉得还不错，刚开始用。')
+})
+
+it('clamps unread digest max to the allowed choices', () => {
+  expect(clampDigestMax(undefined)).toBe(DIGEST_MAX_DEFAULT)
+  expect(clampDigestMax(60)).toBe(60)
+  expect(clampDigestMax(200)).toBe(200)
+  expect(clampDigestMax(999)).toBe(200)
+  expect(clampDigestMax(5)).toBe(20)
+})
+
+it('requests an unread digest without filling reply chips', async () => {
+  const store = useSuggestStore()
+  store.select(a)
+  await flush()
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/runtime/bot/suggest') {
+      return reply({
+        lastMessageId: 'm9',
+        summary: '群里在问降智',
+        points: [{ id: '1', text: '小默问 5.6 不降智了', messageId: 'm9' }],
+        replies: [],
+      }) as Response
+    }
+    return reply(sessionSnapshot(a.accountId)) as Response
+  })
+  await store.requestDigest({
+    lastMessageId: 'm9',
+    messages: [{ id: 'm9', role: 'them', text: '5.6不降智了?' }],
+  })
+  const body = JSON.parse(String(vi.mocked(fetch).mock.calls.find(call => call[0] === '/api/runtime/bot/suggest')?.[1]?.body || '{}'))
+  expect(body.trigger).toBe('digest')
+  expect(body.max).toBe(120)
+  expect(store.replies).toEqual([])
+  expect(store.generating).toBe(false)
+  expect(store.digesting).toBe(false)
+})
+
+it('opens the ChatBot menu before AstrBot configs return', async () => {
+  let finish!: (value: unknown) => void
+  const pending = new Promise(resolve => { finish = resolve })
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === '/api/runtime/bot/configs') return pending as unknown as Response
+    return reply(sessionSnapshot(a.accountId)) as Response
+  })
+  const store = useSuggestStore()
+  store.toggleMenu()
+  expect(store.menuOpen).toBe(true)
+  expect(store.configsReady).toBe(false)
+  const second = store.loadConfigs()
+  finish(reply({ configs: [{ id: 'default', name: '默认', isDefault: true }] }))
+  await Promise.all([second, flush()])
+  expect(store.configsReady).toBe(true)
+  expect(vi.mocked(fetch).mock.calls.filter(call => String(call[0]) === '/api/runtime/bot/configs')).toHaveLength(1)
 })
 
 it('marks empty or failed AstrBot configs as needing workbench model setup', async () => {

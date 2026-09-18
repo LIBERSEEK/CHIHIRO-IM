@@ -31,6 +31,22 @@ export type AstrBotConfigOption = { id: string; name: string; isDefault?: boolea
 
 export const AUTO_SEND_MS = 5000
 export const BOT_DEFAULT_KEY = 'chihiro-bot-new-default'
+export const DIGEST_MAX_KEY = 'chihiro-bot-digest-max'
+export const DIGEST_MAX_DEFAULT = 120
+export const DIGEST_MAX_HARD = 200
+export const DIGEST_MAX_CHOICES = [60, 120, 200] as const
+
+export function clampDigestMax(value: unknown): number {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return DIGEST_MAX_DEFAULT
+  if ((DIGEST_MAX_CHOICES as readonly number[]).includes(n)) return n
+  return Math.min(DIGEST_MAX_HARD, Math.max(20, n))
+}
+
+export function readDigestMax(): number {
+  try { return clampDigestMax(localStorage.getItem(DIGEST_MAX_KEY) || DIGEST_MAX_DEFAULT) }
+  catch { return DIGEST_MAX_DEFAULT }
+}
 
 export function peerSessionKey(type: SuggestContext['type'], peerId: string): string {
   return `${type}:${peerId}`
@@ -123,7 +139,11 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   const setupMissing = ref(false)
   const autoRequested = ref<Set<string>>(new Set())
   const focused = ref(false)
+  const digesting = ref(false)
+  const digestMax = ref(readDigestMax())
+  const activity = ref<Record<string, 'working'>>({})
   let generation = 0
+  let configsInflight: Promise<void> | undefined
   let controller: AbortController | undefined
   let countdownTimer: ReturnType<typeof setInterval> | undefined
   let quietTimer: ReturnType<typeof setTimeout> | undefined
@@ -156,17 +176,50 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     actions = next
   }
 
-  function applySnapshot(value: unknown, accountId: string) {
+  function applySnapshot(value: unknown, accountId?: string) {
     const accounts = (value as { accounts?: { accounts?: unknown[] } })?.accounts?.accounts
     if (!Array.isArray(accounts)) return
-    const account = accounts.find(item => item && typeof item === 'object' && (item as { id?: unknown }).id === accountId) as
-      | { botSessions?: Record<string, unknown> }
-      | undefined
-    const next: Record<string, BotSessionConfig> = {}
-    for (const [id, raw] of Object.entries(account?.botSessions ?? {})) {
-      next[`${accountId}:${id}`] = normalizeBotSession(raw)
+    const next: Record<string, BotSessionConfig> = { ...sessions.value }
+    const targets = accounts.flatMap((item) => {
+      if (!item || typeof item !== 'object') return []
+      const id = (item as { id?: unknown }).id
+      if (typeof id !== 'string' || !id) return []
+      if (accountId && id !== accountId) return []
+      return [{ id, botSessions: (item as { botSessions?: Record<string, unknown> }).botSessions }]
+    })
+    for (const account of targets) {
+      const prefix = `${account.id}:`
+      for (const key of Object.keys(next)) {
+        if (key.startsWith(prefix)) delete next[key]
+      }
+      for (const [id, raw] of Object.entries(account.botSessions ?? {})) {
+        next[`${account.id}:${id}`] = normalizeBotSession(raw)
+      }
     }
     sessions.value = next
+  }
+
+  function applyRuntimeMarks(value: unknown) {
+    applySnapshot(value)
+    const raw = (value as { botActivity?: unknown })?.botActivity
+    const next: Record<string, 'working'> = {}
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      for (const [id, status] of Object.entries(raw as Record<string, unknown>)) {
+        if (status === 'working') next[id] = 'working'
+      }
+    }
+    activity.value = next
+  }
+
+  function listMark(type: SuggestContext['type'], peerId: string): { mode: BotMode; working: boolean } | null {
+    const accountId = shell.activeAccountId
+    if (!accountId || !peerId) return null
+    const full = `${accountId}:${peerSessionKey(type, peerId)}`
+    const session = sessions.value[full]
+    if (!session?.enabled) return null
+    const current = context.value && botConversationKey(context.value) === full
+    const local = Boolean(current && (generating.value || countingDown.value || digesting.value))
+    return { mode: session.mode, working: local || activity.value[full] === 'working' }
   }
 
   async function request(path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -207,6 +260,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     controller?.abort()
     controller = undefined
     generating.value = false
+    digesting.value = false
     replies.value = []
     summary.value = ''
     lastMessageId.value = ''
@@ -360,22 +414,27 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
         configId: next.configId,
       })
       if (version !== generation) return
-      applySnapshot(result, target.accountId)
+      applyRuntimeMarks(result)
     } catch {
       if (version === generation) sessions.value = { ...sessions.value, [botConversationKey(target)]: current }
     }
   }
 
   async function loadConfigs() {
-    try {
-      const result = await request('/api/runtime/bot/configs') as { configs?: AstrBotConfigOption[]; needsSetup?: boolean }
-      configs.value = Array.isArray(result.configs) ? result.configs : []
-      setupMissing.value = result.needsSetup === true || configs.value.length === 0
-    } catch {
-      configs.value = []
-      setupMissing.value = true
-    }
-    configsReady.value = true
+    if (configsInflight) return configsInflight
+    configsInflight = (async () => {
+      try {
+        const result = await request('/api/runtime/bot/configs') as { configs?: AstrBotConfigOption[]; needsSetup?: boolean }
+        configs.value = Array.isArray(result.configs) ? result.configs : []
+        setupMissing.value = result.needsSetup === true || configs.value.length === 0
+      } catch {
+        configs.value = []
+        setupMissing.value = true
+      }
+      configsReady.value = true
+      configsInflight = undefined
+    })()
+    return configsInflight
   }
 
   function select(next: SuggestContext) {
@@ -401,7 +460,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     try {
       const state = await request('/api/runtime/state')
       if (version !== generation) return
-      applySnapshot(state, accountId)
+      applyRuntimeMarks(state)
       if (!context.value || context.value.accountId !== accountId) return
       const fullKey = botConversationKey(context.value)
       if (!sessions.value[fullKey] && newSessionBotDefault()) {
@@ -419,7 +478,6 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     discardSurface()
     autoRequested.value = new Set()
     context.value = null
-    sessions.value = {}
     menuOpen.value = false
     configs.value = []
     configsReady.value = false
@@ -494,6 +552,30 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     })
   }
 
+  async function requestDigest(input: {
+    lastMessageId: string
+    messages: SuggestTurnMessage[] | { role: 'them' | 'me'; text: string; id?: string }[]
+  }) {
+    if (!context.value || !input.lastMessageId) return
+    const target = { ...context.value }
+    const version = generation
+    digesting.value = true
+    try {
+      await request('/api/runtime/bot/suggest', {
+        accountId: target.accountId,
+        type: target.type,
+        peerId: target.peerId,
+        lastMessageId: input.lastMessageId,
+        trigger: 'digest',
+        max: digestMax.value,
+        messages: input.messages,
+      })
+    } catch { /* history pan shows skip */ }
+    finally {
+      if (version === generation) digesting.value = false
+    }
+  }
+
   async function requestSuggest(input: {
     lastMessageId: string
     messages: SuggestTurnMessage[] | { role: 'them' | 'me'; text: string }[]
@@ -546,6 +628,12 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     }
   }
 
+  function setDigestMax(value: unknown) {
+    const next = clampDigestMax(value)
+    digestMax.value = next
+    try { localStorage.setItem(DIGEST_MAX_KEY, String(next)) } catch { /* ignore */ }
+  }
+
   function onOperatorInput() {
     cancelCountdown()
     cancelQuiet()
@@ -556,9 +644,9 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
 
   return {
     context, sessions, menuOpen, replies, summary, lastMessageId, generating, countdownMs, countdownReplyId,
-    configs, configsReady, needsAstrBotSetup, enabled, mode, configId, selectedConfigLabel, highlightedId, countingDown, composerReply, config,
-    bindActions, select, clear, applySnapshot, persist, toggleMenu, closeMenu,
-    setEnabled, setMode, setConfigId, pick, sendReply, requestSuggest, alreadyAutoRequested,
+    configs, configsReady, needsAstrBotSetup, enabled, mode, configId, selectedConfigLabel, highlightedId, countingDown, composerReply, config, activity, digesting, digestMax,
+    bindActions, select, clear, applySnapshot, applyRuntimeMarks, listMark, persist, toggleMenu, closeMenu,
+    setEnabled, setMode, setConfigId, setDigestMax, pick, sendReply, requestSuggest, requestDigest, alreadyAutoRequested,
     onOperatorInput, noteThemActivity, flushQuietTurn, cancelCountdown, clearChips, loadConfigs, discardSurface,
     setFocused,
   }

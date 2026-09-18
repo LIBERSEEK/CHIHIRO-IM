@@ -3,6 +3,7 @@ import { isHosted } from '../api/http';
 import { useAgentNavigation } from '../navigation';
 import { chatApi, configRouteApi } from '@/modules/agent/native/src/api/v1';
 import { buildWebchatUmoDetails, getStoredSelectedChatConfigId } from '@/modules/agent/native/src/utils/chatConfigBinding';
+import { withoutChatBotSessions } from '@/modules/agent/is-chatbot-session';
 
 export interface Session {
     session_id: string;
@@ -35,7 +36,7 @@ export function useSessions(chatboxMode: boolean = false) {
     async function getSessions() {
         try {
             const response = await chatApi.listSessions();
-            sessions.value = response.data.data;
+            sessions.value = withoutChatBotSessions(response.data.data);
 
 
 

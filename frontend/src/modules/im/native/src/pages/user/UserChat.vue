@@ -16,6 +16,7 @@
             (profileOnly ? ' contact-profile-view' : '') +
             (uiStore.openSideBar ? ' open' : '') +
             (multipleSelectList.length > 0 ? ' is-multiselect' : '') +
+            (sessionRailVisible ? ' has-session-rail' : '') +
             (['linux', 'win32'].includes(backend.platform ?? '') ? ' withBar' : '')"
         :style="{
             'background-image': toBackgroundImageStyle(!settingsStore.sysConfig.chat_more_blur ? settingsStore.sysConfig.chat_background : ''),
@@ -31,6 +32,7 @@
             <div class="info">
                 <p>
                     {{ chat.show.name }}
+                    <em v-if="isTempSession" class="chihiro-temp-tag">{{ $t('临时会话') }}</em>
                     <template
                         v-if="chat.show.type == 'group'">
                         ({{
@@ -38,10 +40,7 @@
                         }})
                     </template>
                 </p>
-                <span v-if="chat.show.temp">
-                    {{ $t('来自群聊：{group}', { group: chat.show.temp }) }}
-                </span>
-                <span v-else>
+                <span>
                     <template v-if="chat.show.appendInfo">
                         {{ chat.show.appendInfo }}
                     </template>
@@ -81,8 +80,12 @@
                         </div>
                         <div class="chihiro-bot-row">
                             <span>配置</span>
+                            <div v-if="!suggest.configsReady" class="chihiro-bot-loading">
+                                正在启动 AstrBot
+                                <span class="chihiro-bot-loading-dots" aria-hidden="true"><i /><i /><i /></span>
+                            </div>
                             <button
-                                v-if="suggest.needsAstrBotSetup"
+                                v-else-if="suggest.needsAstrBotSetup"
                                 type="button"
                                 class="chihiro-bot-setup"
                                 @click="openChatBotSetup">去配置</button>
@@ -93,10 +96,28 @@
                                 </select>
                             </div>
                         </div>
+                        <div class="chihiro-bot-row">
+                            <span>总结上限</span>
+                            <div class="select-wrapper chihiro-bot-select">
+                                <select :value="suggest.digestMax" @change="onDigestMaxChange">
+                                    <option :value="60">60 条</option>
+                                    <option :value="120">120 条</option>
+                                    <option :value="200">200 条</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button type="button" class="chihiro-bot-history-link" @click="openBotHistory">查看历史</button>
                     </div>
                 </div>
                 <div class="chihiro-history-btn" :class="{ active: chihiroHistory.open }" :title="$t('搜索消息')" @click.stop="toggleChihiroHistory">
                     <font-awesome-icon :icon="['fas', 'clock-rotate-left']" />
+                </div>
+                <div
+                    v-if="isTempSession"
+                    class="chihiro-add-friend-btn"
+                    :title="$t('加好友')"
+                    @click.stop="openTempAddFriend">
+                    <font-awesome-icon :icon="['fas', 'user-plus']" />
                 </div>
                 <div class="more" :title="$t('更多')" @click.stop="openChatInfoPan">
                     <font-awesome-icon :icon="['fas', 'ellipsis-vertical']" />
@@ -234,17 +255,22 @@
             </template>
             <span ref="chatPadding" class="chat-padding">&nbsp;</span>
         </div>
-        <button
-            v-if="unreadHintCount > 0"
-            type="button"
-            class="chihiro-unread-hint"
-            @click="jumpToUnread">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 7.4 8 3.6 12 7.4"/>
-                <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 12.4 8 8.6 12 12.4"/>
-            </svg>
-            <span>{{ unreadHintCount }}条新消息</span>
-        </button>
+        <div v-if="unreadHintCount > 0" class="chihiro-unread-hint">
+            <button type="button" class="chihiro-unread-hint-jump" @click="jumpToUnread">
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                    <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 7.4 8 3.6 12 7.4"/>
+                    <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M4 12.4 8 8.6 12 12.4"/>
+                </svg>
+                <span>{{ unreadHintCount }}条新消息</span>
+            </button>
+            <button
+                type="button"
+                class="chihiro-unread-hint-bot"
+                title="事件总结"
+                @click.stop="openUnreadDigest">
+                <span class="chihiro-ai-symbol" aria-hidden="true">✦</span>
+            </button>
+        </div>
         <!-- 底部区域 -->
         <div id="send-more" ref="sendMore" class="more">
             <!-- 功能附加 -->
@@ -536,13 +562,27 @@
             :nickname="profilePop.nickname"
             :card="profilePop.card"
             :anchor="profilePop.anchor"
-            @close="closeProfilePop" />
+            @close="closeProfilePop"
+            @start-chat="onMemberStartChat" />
         <!-- 群 / 好友信息弹窗 -->
         <Transition name="chat-info-float" :duration="{ enter: 220, leave: 180 }">
             <Info v-if="tags.openChatInfo" ref="infoRef" :chat="chat" :tags="tags"
+                :initial-tab="chatInfoTab"
                 @close="profileOnly ? emit('closeProfile') : openChatInfoPan()"
                 @start-chat="onProfileStartChat" />
         </Transition>
+        <UserSessionRail
+            v-if="sessionRailVisible"
+            :view="sessionRailView"
+            :chat="chat"
+            :account-id="sessionRailContext.accountId"
+            :type="sessionRailContext.type"
+            :peer-id="sessionRailContext.peerId"
+            :working="botHistoryWorking"
+            @close="closeBotHistory"
+            @jump-to-msg="jumpHistoryMsg"
+            @open-info="openGroupInfoFromRail"
+            @open-profile="openProfilePop" />
         <div v-if="profileOnly && chat.show.type === 'group'" class="contact-profile-actions">
             <button type="button" class="contact-profile-send" @click="emit('startChat')">{{ $t('发送消息') }}</button>
         </div>
@@ -603,6 +643,7 @@ import {
 import SendUtil from '@renderer/function/sender'
 import Option, { get } from '@renderer/function/option'
 import Info from '@renderer/pages/user/UserInfo.vue'
+import UserSessionRail from '@renderer/components/user/UserSessionRail.vue'
 import MsgBody from '@renderer/components/user/UserMsgBody.vue'
 import UserProfilePop from '@renderer/components/user/UserProfilePop.vue'
 import NoticeBody from '@renderer/components/user/UserNoticeBody.vue'
@@ -614,6 +655,7 @@ import imageCompression from 'browser-image-compression'
 import {
     ref,
     watch,
+    computed,
     onMounted,
     onBeforeUnmount,
     markRaw,
@@ -628,6 +670,7 @@ import {
 	scrollToMsg,
     downloadFile,
     loadHistory as loadHistoryFirst,
+    loadHistoryMessage,
     shouldAutoFocus,
 	vMenu,
 	vMove,
@@ -661,7 +704,7 @@ import {
 } from '@renderer/function/elements/information'
 import { backend } from '@renderer/runtime/backend'
 import { toBackgroundImageStyle } from '@renderer/function/utils/backgroundUtil'
-import { dbGetBefore, dbGetBeforeByTime, dbSearchMessages } from '@renderer/function/utils/localHistoryUtil'
+import { dbGetBefore, dbGetBeforeByTime, dbGetLatest, dbSearchMessages } from '@renderer/function/utils/localHistoryUtil'
 import Emoji from '@renderer/function/model/emoji'
 import EmojiFace from '@renderer/components/user/UserEmojiFace.vue'
 import { Img } from '@renderer/function/model/img'
@@ -689,6 +732,7 @@ import {
     plusOneSendSegments,
     shouldShowPlusOne,
 } from '@chihiro/im-native/plus-one'
+import { isFriendContact, openAddFriendApply } from '@chihiro/im-native/add-contact'
 import { messageGroupFlags } from '@chihiro/im-native/message-group'
 import {
     captureNativeAsyncScope,
@@ -707,7 +751,7 @@ const { chat, list, profileOnly = false } = defineProps<{
     imgView?: any
     profileOnly?: boolean
 }>()
-const emit = defineEmits<{ startChat: []; closeProfile: [] }>()
+const emit = defineEmits<{ startChat: [info?: BaseChatInfoElem]; closeProfile: [] }>()
 let viewGeneration = 0
 function currentConversationKey() {
     return `${String(chat.show?.id ?? '')}:${(chat.show as any)?.temp ?? ''}`
@@ -737,14 +781,9 @@ function openChatBotSetup() {
     workspace.selectList('workbench')
     void agentNav.openProviderWorkspace()
 }
-async function toggleChihiroFeature() {
+function toggleChihiroFeature() {
     if (suggest.menuOpen) {
         suggest.closeMenu()
-        return
-    }
-    if (!suggest.configsReady) await suggest.loadConfigs()
-    if (suggest.needsAstrBotSetup) {
-        openChatBotSetup()
         return
     }
     suggest.toggleMenu()
@@ -752,6 +791,186 @@ async function toggleChihiroFeature() {
 function onSuggestConfigChange(event: Event) {
     const value = (event.target as HTMLSelectElement).value
     void suggest.setConfigId(value || null)
+}
+function onDigestMaxChange(event: Event) {
+    suggest.setDigestMax((event.target as HTMLSelectElement).value)
+}
+const botHistoryOpen = ref(false)
+const botHistoryWorking = computed(() => {
+    const ctx = sessionRailContext.value
+    if (!ctx.accountId || !ctx.peerId) return false
+    return Boolean(suggest.digesting || suggest.listMark(ctx.type, ctx.peerId)?.working)
+})
+const sessionRailVisible = computed(() => {
+    if (profileOnly) return false
+    if (!chat.show?.id) return false
+    if (chat.show.type === 'group') return true
+    return botHistoryOpen.value
+})
+const sessionRailView = computed<'group' | 'history'>(() => botHistoryOpen.value ? 'history' : 'group')
+const sessionRailContext = computed(() => {
+    if (suggest.context) return suggest.context
+    return {
+        accountId: String(authStore.loginInfo?.uin || ''),
+        type: (chat.show?.type === 'group' ? 'group' : 'private') as 'private' | 'group',
+        peerId: String(chat.show?.id || ''),
+    }
+})
+function closeBotHistory() {
+    botHistoryOpen.value = false
+}
+function openBotHistory() {
+    suggest.closeMenu()
+    if (tags.value.openChatInfo) tags.value.openChatInfo = false
+    botHistoryOpen.value = true
+}
+function mapUnreadDigestItem(item: any, self: number): SuggestTurnMessage | null {
+    if (!isSuggestChatMessage(item)) return null
+    const text = String(item.raw_message || getMsgRawTxt(item) || '').trim()
+    if (!text) return null
+    const senderId = String(item.sender?.user_id ?? '')
+    const rawTime = Number(item.time || 0)
+    return {
+        id: String(item.message_id),
+        role: Number(item.sender?.user_id) === self ? 'me' : 'them',
+        text,
+        senderId,
+        name: String(item.sender?.card || item.sender?.nickname || senderId),
+        time: rawTime > 0 && rawTime < 1e12 ? rawTime * 1000 : rawTime,
+    }
+}
+function collectUnreadDigestFrom(source: any[], need: number, self: number): SuggestTurnMessage[] {
+    const picked: SuggestTurnMessage[] = []
+    for (let index = source.length - 1; index >= 0 && picked.length < need; index--) {
+        const mapped = mapUnreadDigestItem(source[index], self)
+        if (mapped) picked.unshift(mapped)
+    }
+    return picked
+}
+function unreadDigestNeed() {
+    const unread = Math.max(unreadHintCount.value, pendingEnterUnread.value, 0)
+    const cap = suggest.digestMax
+    return { unread, cap, need: Math.min(unread > 0 ? unread : 1, cap) }
+}
+async function mergeLocalUnread(need: number) {
+    if (!settingsStore.sysConfig.enable_local_history) return
+    const chatId = Number(chat.show?.id)
+    if (!Number.isFinite(chatId) || chatId <= 0) return
+    const extra = await dbGetLatest(authStore.loginInfo.uin, chatId, need)
+    if (!extra.length) return
+    const existingIds = new Set(chatStore.messageList.map((item) => String(item.message_id ?? '')))
+    const addList = extra.filter((item) => {
+        const id = String(item?.message_id ?? '')
+        return id.length > 0 && !existingIds.has(id)
+    })
+    if (addList.length > 0) chatStore.messageList.splice(0, 0, ...addList)
+}
+function requestUnreadHistory(count: number) {
+    const type = chat.show?.type
+    const id = chat.show?.id
+    if (!type || !id) return
+    if (!list.length) {
+        loadHistoryMessage(id, type, count, 'getChatHistoryFist')
+        return
+    }
+    const firstMsgId = list[0].message_id
+    const fullPage = authStore.jsonMap.message_list?.pagerType == 'full'
+    let name
+    if (authStore.jsonMap.message_list && type != 'group') {
+        name = authStore.jsonMap.message_list.private_name
+    } else {
+        name = authStore.jsonMap.message_list.name
+    }
+    Connector.send(
+        name ?? 'get_chat_history',
+        {
+            group_id: type == 'group' ? id : undefined,
+            user_id: type != 'group' ? id : undefined,
+            message_id: firstMsgId,
+            count: fullPage ? chatStore.messageList.length + count : count,
+        },
+        'getChatHistory',
+    )
+}
+function waitForUnreadDigestNeed(need: number, timeoutMs = 4500) {
+    const self = Number(authStore.loginInfo.uin)
+    return new Promise<void>((resolve) => {
+        if (collectUnreadDigestFrom(list, need, self).length >= need) {
+            resolve()
+            return
+        }
+        let done = false
+        const finish = () => {
+            if (done) return
+            done = true
+            stop()
+            window.clearTimeout(timer)
+            resolve()
+        }
+        const stop = watch(() => list.length, () => {
+            if (collectUnreadDigestFrom(list, need, self).length >= need) finish()
+        })
+        const timer = window.setTimeout(finish, timeoutMs)
+    })
+}
+async function unreadDigestMessages(): Promise<SuggestTurnMessage[]> {
+    const { need, cap } = unreadDigestNeed()
+    const self = Number(authStore.loginInfo.uin)
+    const collect = () => collectUnreadDigestFrom(list, need, self)
+    let picked = collect()
+    if (picked.length >= need) return picked
+    await mergeLocalUnread(need)
+    picked = collect()
+    if (picked.length >= need) return picked
+    requestUnreadHistory(need)
+    await waitForUnreadDigestNeed(need)
+    picked = collect()
+    return picked.length > cap ? picked.slice(-cap) : picked
+}
+function openUnreadDigest() {
+    openBotHistory()
+    syncSuggestContext()
+    void runUnreadDigest()
+}
+async function runUnreadDigest() {
+    suggest.digesting = true
+    try {
+        const messages = await unreadDigestMessages()
+        const last = messages[messages.length - 1]
+        if (!last?.id) return
+        await suggest.requestDigest({ lastMessageId: last.id, messages })
+    } catch {
+        /* history pan shows skip */
+    } finally {
+        suggest.digesting = false
+    }
+}
+function jumpHistoryMsg(messageId: string) {
+    const id = String(messageId || '').trim()
+    if (!id) return
+    const seq = id.startsWith('chat-') ? id : `chat-${id}`
+    beginProgrammaticScroll()
+    if (!scrollToMsg(seq, true)) {
+        new PopInfo().add(PopType.INFO, $t('无法定位上下文'))
+    }
+}
+const chatInfoTab = ref<'members' | 'notice'>('members')
+const infoRef = ref<{ selectTab?: (tab: 'members' | 'notice') => void } | null>(null)
+function openGroupInfoFromRail() {
+    chatInfoTab.value = 'notice'
+    if (!tags.value.openChatInfo) openChatInfoPan()
+    else nextTick(() => infoRef.value?.selectTab?.('notice'))
+}
+function loadGroupNotices() {
+    if (profileOnly) return
+    if (chat.show?.type !== 'group' || !chat.show?.id) return
+    const noticeName = authStore.jsonMap?.group_notices?.name
+    if (!noticeName) return
+    Connector.send(
+        noticeName,
+        { group_id: chat.show.id },
+        'getGroupNotices',
+    )
 }
 function isSuggestChatMessage(item: any) {
     if (!item || item.fake_msg) return false
@@ -1029,6 +1248,18 @@ const settingsStore = useSettingsStore()
 const authStore = useAuthStore()
 const chatStore = useChatStore()
 const contactStore = useContactStore()
+const isTempSession = computed(() => {
+    if (chat.show?.type !== 'user') return false
+    const id = Number(chat.show?.id)
+    if (!Number.isFinite(id) || id <= 0) return false
+    return !isFriendContact(contactStore.userList, id)
+})
+function openTempAddFriend() {
+    openAddFriendApply({
+        userId: chat.show.id,
+        nickname: chat.show.name,
+    })
+}
 const mergePan = useTemplateRef<InstanceType<typeof MergePan>>('mergePan')
 const msgPan = useTemplateRef<HTMLDivElement>('msgPan')
 const chatPadding = useTemplateRef<HTMLSpanElement>('chatPadding')
@@ -1160,6 +1391,11 @@ function onChihiroDocKey(e: KeyboardEvent) {
         e.preventDefault()
         return
     }
+    if (botHistoryOpen.value) {
+        closeBotHistory()
+        e.preventDefault()
+        return
+    }
     if (chihiroHistory.open) {
         closeChihiroHistory()
         return
@@ -1255,6 +1491,7 @@ const chatMoveOptions: VMoveOptions<HTMLDivElement> = {
 //#endregion
 
 function resetState() {
+    botHistoryOpen.value = false
     chihiroHistory.open = false
     chihiroHistory.query = ''
     chihiroHistory.tab = 'all'
@@ -1361,6 +1598,11 @@ watch(currentConversationKey, () => {
     const session = [...contactStore.userList].find(i => (i.user_id ?? i.group_id) === sessionId)
     if (session && !profileOnly) history.add(session)
 })
+
+watch(
+    () => [chat.show?.id, chat.show?.type, authStore.jsonMap?.group_notices?.name] as const,
+    () => { loadGroupNotices() },
+)
 
 watch(() => msg.value, (_newMsg, oldMsgVal) => {
     oldMsg.value = oldMsgVal
@@ -1953,6 +2195,10 @@ function mainKeyUp(event: KeyboardEvent) {
     const logger = new Logger()
 
     if (event.keyCode === 27) {
+        if (botHistoryOpen.value) {
+            closeBotHistory()
+            return
+        }
         if (chihiroHistory.open) {
             closeChihiroHistory()
             return
@@ -2804,7 +3050,16 @@ function closeMsgMenu() {
     }, 300)
 }
 
-function onProfileStartChat() {
+function onMemberStartChat(info: BaseChatInfoElem) {
+    emit('startChat', info)
+    closeProfilePop()
+}
+
+function onProfileStartChat(info?: BaseChatInfoElem) {
+    if (info?.id) {
+        emit('startChat', info)
+        return
+    }
     if (profileOnly) emit('startChat')
     else if (tags.value.openChatInfo) openChatInfoPan()
 }
@@ -2812,6 +3067,7 @@ function onProfileStartChat() {
 function openChatInfoPan() {
     tags.value.openChatInfo = !tags.value.openChatInfo
     if (tags.value.openChatInfo) {
+        botHistoryOpen.value = false
         if (
             chat.show.type === 'group' &&
             chat.info.group_info.gc !== chat.show.id
@@ -2858,6 +3114,8 @@ function openChatInfoPan() {
                 }, 'getGroupFiles')
             }
         }
+    } else {
+        chatInfoTab.value = 'members'
     }
 }
 
@@ -3878,6 +4136,8 @@ function exitWin() {
         overflow: hidden;
         display: flex;
         flex-direction: column;
+        align-items: stretch;
+        justify-content: flex-start;
     }
     .contact-profile-view:has(.contact-profile-actions) :deep(.chat-info-pan) {
         inset: 0 0 76px !important;
@@ -3982,25 +4242,52 @@ function exitWin() {
     z-index: 8;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
     height: 32px;
-    padding: 0 12px 0 10px;
-    border: 0;
+    padding: 0 4px 0 4px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--color-card-1) 82%, transparent);
     backdrop-filter: blur(18px);
     color: #4c9fff;
     font-size: 13px;
     line-height: 32px;
-    cursor: pointer;
     pointer-events: all;
 }
 .chat-pan > .chihiro-unread-hint:hover {
     background: color-mix(in srgb, var(--color-card-1) 92%, transparent);
 }
-.chat-pan > .chihiro-unread-hint svg {
+.chat-pan > .chihiro-unread-hint .chihiro-unread-hint-jump,
+.chat-pan > .chihiro-unread-hint .chihiro-unread-hint-bot {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    cursor: pointer;
+}
+.chat-pan > .chihiro-unread-hint .chihiro-unread-hint-jump {
+    height: 32px;
+    padding: 0 8px 0 6px;
+}
+.chat-pan > .chihiro-unread-hint .chihiro-unread-hint-jump svg {
     display: block;
     flex: 0 0 auto;
+}
+.chat-pan > .chihiro-unread-hint .chihiro-unread-hint-bot {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-left: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+    border-radius: 0 999px 999px 0;
+}
+.chat-pan > .chihiro-unread-hint .chihiro-unread-hint-bot .chihiro-ai-symbol {
+    font-size: 13px;
+    line-height: 1;
 }
 .note:has(.note-time).msglist-enter-from,
 .note:has(.note-time).msglist-enter-active {
@@ -4239,6 +4526,24 @@ function exitWin() {
     line-height: 30px;
     outline: none;
 }
+.chihiro-bot-history-link {
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 36px;
+    margin: 4px 0 2px;
+    padding: 0;
+    border: 0;
+    border-top: 1px solid rgba(127, 127, 127, 0.16);
+    background: transparent;
+    color: var(--color-font);
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.chihiro-bot-history-link:hover {
+    color: var(--color-main);
+}
 .chihiro-bot-setup {
     appearance: none;
     height: 32px;
@@ -4254,14 +4559,58 @@ function exitWin() {
     line-height: 30px;
     cursor: pointer;
 }
+.chihiro-bot-loading {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 132px;
+    max-width: 176px;
+    color: var(--color-font-2);
+    font-size: 12px;
+    line-height: 1.3;
+    text-align: right;
+}
+.chihiro-bot-loading-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.chihiro-bot-loading-dots i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: chihiro-bot-dot 1s infinite ease-in-out;
+}
+.chihiro-bot-loading-dots i:nth-child(2) { animation-delay: 0.15s; }
+.chihiro-bot-loading-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chihiro-bot-dot {
+    0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+    40% { opacity: 1; transform: translateY(-2px); }
+}
 .msg-menu-body .chihiro-ai-symbol {
     display: grid;
     place-items: center;
     font-size: 14px;
     line-height: 1;
 }
+.chihiro-temp-tag {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-style: normal;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+    vertical-align: middle;
+    color: #f5a623;
+    background: rgba(245, 166, 35, 0.16);
+}
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-feature-btn,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-history-btn,
+.user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-add-friend-btn,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .more {
     background: transparent !important;
     border-radius: 50%;
@@ -4275,12 +4624,18 @@ function exitWin() {
 }
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-feature-btn svg,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-history-btn svg,
+.user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-add-friend-btn svg,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .more svg {
     color: var(--color-font-1) !important;
     height: 16px !important;
     width: 16px !important;
     margin: 0 !important;
     pointer-events: none;
+}
+.user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-add-friend-btn svg {
+    /* user-plus is 640×512; 20×16 keeps glyph height with history/more. */
+    height: 16px !important;
+    width: 20px !important;
 }
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-feature-btn .chihiro-ai-symbol {
     display: grid;
@@ -4297,6 +4652,7 @@ function exitWin() {
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-feature-btn:hover,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-history-btn:hover,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-history-btn.active,
+.user-skin.chat-pan > div.info > .chihiro-head-actions .chihiro-add-friend-btn:hover,
 .user-skin.chat-pan > div.info > .chihiro-head-actions .more:hover {
     background: rgba(127, 127, 127, 0.18) !important;
 }
@@ -4478,6 +4834,42 @@ function exitWin() {
     box-shadow: none !important;
     backdrop-filter: none !important;
     border-bottom: 1px solid rgba(127, 127, 127, 0.12);
+}
+.user-skin.chat-pan.has-session-rail {
+    --chihiro-session-rail-width: 272px;
+    --chihiro-chat-header-height: 52px;
+}
+.user-skin.chat-pan.has-session-rail > div.info {
+    z-index: 7;
+}
+.user-skin.chat-pan.has-session-rail > div.chat {
+    min-width: 0;
+    padding-right: calc(28px + var(--chihiro-session-rail-width)) !important;
+}
+.user-skin.chat-pan.has-session-rail > div.more {
+    left: 0;
+    right: var(--chihiro-session-rail-width);
+    width: auto;
+}
+.user-skin.chat-pan.has-session-rail > .chihiro-unread-hint {
+    right: calc(16px + var(--chihiro-session-rail-width));
+}
+.user-skin.chat-pan > .chat-info-pan {
+    inset: 0;
+    width: auto;
+    height: auto;
+}
+.user-skin.chat-pan.has-session-rail > .chat-info-pan {
+    right: var(--chihiro-session-rail-width);
+}
+.user-skin.chat-pan.contact-profile-view > .chat-info-pan,
+.user-skin.chat-pan.contact-profile-view.has-session-rail > .chat-info-pan {
+    right: 0;
+}
+@media (max-width: 900px) {
+    .user-skin.chat-pan.has-session-rail {
+        --chihiro-session-rail-width: 0px;
+    }
 }
 .user-skin.chat-pan .face-pan,
 .user-skin.chat-pan .jin-pan {

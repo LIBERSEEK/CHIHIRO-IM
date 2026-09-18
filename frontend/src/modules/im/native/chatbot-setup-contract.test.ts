@@ -10,10 +10,17 @@ describe('ChatBot unconfigured setup hops to workbench model config', () => {
     expect(chat).toContain("selectList('workbench')")
     expect(chat).toContain('openProviderWorkspace')
     expect(chat).toContain('createHostedAgentNavigation')
-    expect(chat).toContain("v-if=\"suggest.needsAstrBotSetup\"")
+    expect(chat).toContain('v-else-if="suggest.needsAstrBotSetup"')
     expect(chat).toContain('noteThemActivity')
     expect(chat).toContain('suggestSnapshot')
     expect(chat).toContain('atSelf')
     expect(chat).toContain('senderId')
+  })
+
+  it('opens the settings menu immediately while AstrBot starts', () => {
+    expect(chat).toContain('正在启动 AstrBot')
+    expect(chat).toContain('!suggest.configsReady')
+    expect(chat).toContain('chihiro-bot-loading')
+    expect(chat).not.toContain('await suggest.loadConfigs()')
   })
 })

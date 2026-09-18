@@ -96,6 +96,14 @@ export class Connector {
         }
     }
 
+    static async requestAction(name: string, params: Record<string, unknown> = {}): Promise<any> {
+        const current = binding
+        if (!current?.valid) throw new Error('Native IM has no account session')
+        const response = await current.request(name, params)
+        if (binding !== current) throw new AccountSessionSupersededError(current.accountId)
+        return response?.data
+    }
+
     static send(name: string, params: Record<string, unknown>, echo = name) {
         if (!binding?.valid) return
         binding.send(name, params, echo)
