@@ -11,6 +11,7 @@ import {
   highestScoreReply,
   botConversationKey,
   AUTO_SEND_MS,
+  PRESENCE_HEARTBEAT_MS,
   PRIVATE_QUIET_MS,
   clampDigestMax,
   DIGEST_MAX_DEFAULT,
@@ -194,6 +195,56 @@ it('stores bubble options and a separate composer summary', async () => {
   expect(store.replies.map(item => item.text)).toEqual(['还没用过，你觉得呢？', '听起来挺有意思'])
   expect(store.summary).toBe('我觉得还不错，刚开始用。')
   expect(store.composerReply?.text).toBe('我觉得还不错，刚开始用。')
+})
+
+it('keeps a hold read overlay and does not auto-send', async () => {
+  const store = useSuggestStore()
+  const sent: string[] = []
+  store.bindActions({ fill: () => {}, send: text => { sent.push(text) }, inputText: () => '' })
+  store.select(a)
+  await flush()
+  await store.setEnabled(true)
+  await store.setMode('auto')
+  vi.mocked(fetch).mockResolvedValueOnce(reply({
+    lastMessageId: 'm8',
+    replies: [{ id: '1', text: '哈哈', score: 0.9 }],
+    summary: '哈哈哈哈',
+    read: {
+      intent: { id: 'smalltalk', options: [{ id: 'smalltalk', p: 1 }] },
+      speakNow: { yes: 0.12, no: 0.88 },
+      action: { id: 'hold', options: [{ id: 'hold', p: 1 }] },
+      urgency: 1,
+      note: '',
+    },
+  }) as Response)
+  vi.useFakeTimers()
+  await store.requestSuggest({ lastMessageId: 'm8', trigger: 'menu', messages: [{ role: 'them', text: '哈哈' }] })
+  expect(store.read?.action.id).toBe('hold')
+  expect(store.lastMessageId).toBe('m8')
+  expect(store.countingDown).toBe(false)
+  await vi.advanceTimersByTimeAsync(AUTO_SEND_MS + 50)
+  expect(sent).toEqual([])
+})
+
+it('keeps lastMessageId when only a read overlay comes back', async () => {
+  const store = useSuggestStore()
+  store.select(a)
+  await flush()
+  vi.mocked(fetch).mockResolvedValueOnce(reply({
+    lastMessageId: 'm7',
+    replies: [],
+    summary: '',
+    read: {
+      intent: { id: 'smalltalk', options: [{ id: 'smalltalk', p: 1 }] },
+      speakNow: { yes: 0.1, no: 0.9 },
+      action: { id: 'hold', options: [{ id: 'hold', p: 1 }] },
+      urgency: 1,
+    },
+  }) as Response)
+  await store.requestSuggest({ lastMessageId: 'm7', trigger: 'menu', messages: [{ role: 'them', text: '嗯嗯' }] })
+  expect(store.replies).toEqual([])
+  expect(store.read?.action.id).toBe('hold')
+  expect(store.lastMessageId).toBe('m7')
 })
 
 it('clamps unread digest max to the allowed choices', () => {
@@ -432,6 +483,10 @@ it('auto-sends the highest score reply after 5s when the input stays empty', asy
   expect(store.replies).toEqual([])
 })
 
+function presenceCalls() {
+  return vi.mocked(fetch).mock.calls.filter(call => call[0] === '/api/runtime/bot/presence')
+}
+
 it('releases an auto session to Runtime when the conversation is unfocused', async () => {
   const store = useSuggestStore()
   store.select(a)
@@ -444,4 +499,40 @@ it('releases an auto session to Runtime when the conversation is unfocused', asy
   const urls = vi.mocked(fetch).mock.calls.map(call => String(call[0]))
   expect(urls).toContain('/api/runtime/bot/presence')
   expect(urls).toContain('/api/runtime/bot/nudge')
+})
+
+it('posts Auto presence as a lease instead of on every focus tick or keystroke', async () => {
+  const store = useSuggestStore()
+  store.select(a)
+  await flush()
+  await store.setEnabled(true)
+  await store.setMode('auto')
+  vi.useFakeTimers()
+  store.setFocused(true)
+  expect(presenceCalls()).toHaveLength(1)
+  store.setFocused(true)
+  store.setFocused(true)
+  store.onOperatorInput()
+  store.onOperatorInput()
+  expect(presenceCalls()).toHaveLength(1)
+  await vi.advanceTimersByTimeAsync(PRESENCE_HEARTBEAT_MS + 20)
+  expect(presenceCalls()).toHaveLength(2)
+  store.setFocused(false)
+  expect(presenceCalls()).toHaveLength(3)
+  expect(JSON.parse(String(presenceCalls()[2][1]?.body || '{}')).focused).toBe(false)
+})
+
+it('does not report presence unless ChatBot Auto is on', async () => {
+  const store = useSuggestStore()
+  store.select(a)
+  await flush()
+  await store.setEnabled(true)
+  store.setFocused(true)
+  store.setFocused(true)
+  store.onOperatorInput()
+  await flush()
+  expect(presenceCalls()).toHaveLength(0)
+  await store.setMode('auto')
+  await flush()
+  expect(presenceCalls()).toHaveLength(1)
 })

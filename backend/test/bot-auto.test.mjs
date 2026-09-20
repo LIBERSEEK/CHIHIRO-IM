@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createBotAuto } from '../src/runtime/bot-auto.mjs'
+import { createBotAuto, PRESENCE_TTL_MS } from '../src/runtime/bot-auto.mjs'
 
 function harness(t, account = {
   id: 'qq:10001',
@@ -22,10 +22,10 @@ function harness(t, account = {
         ? { phase: 'ready', uin: account.uin, ports: { ws: 5801 }, tokens: { ws: 'tok' } }
         : null,
     },
-    botSuggest: {
+    botSuggest: extras.botSuggest || {
       suggest: async (body) => {
         suggested.push(body)
-        return { replies: [{ id: '1', text: '我在', score: 0.9 }], summary: '我在的。' }
+        return extras.suggestResult || { replies: [{ id: '1', text: '我在', score: 0.9 }], summary: '我在的。' }
       },
     },
     sendToPeer: async (_id, body) => { sent.push(body) },
@@ -84,6 +84,26 @@ test('unfocused auto session sends after the quiet window', async (t) => {
   assert.equal(h.notes[0].sent, '我在的。')
 })
 
+test('auto session holds when the read gate says not to speak', async (t) => {
+  const h = harness(t, undefined, {
+    suggestResult: {
+      replies: [{ id: '1', text: '哈哈', score: 0.9 }],
+      summary: '哈哈哈哈',
+      read: {
+        intent: { id: 'smalltalk', options: [{ id: 'smalltalk', p: 1 }] },
+        speakNow: { yes: 0.12, no: 0.88 },
+        action: { id: 'hold', options: [{ id: 'hold', p: 1 }] },
+        urgency: 1,
+        note: '',
+      },
+    },
+  })
+  const result = await h.auto.flushTurn('qq:10001', 'private', '20002')
+  assert.equal(result.skipped, 'hold')
+  assert.equal(h.notes[0].skipped, 'hold')
+  assert.equal(h.sent.length, 0)
+})
+
 test('group filler-only bursts are recorded as skipped join', async (t) => {
   const h = harness(t, {
     id: 'qq:10001',
@@ -105,6 +125,15 @@ test('focused conversation does not start a background auto send', (t) => {
   assert.equal(noted.skipped, 'focused')
   h.fireTimers()
   assert.equal(h.sent.length, 0)
+})
+
+test('presence lease survives a missed heartbeat then expires', (t) => {
+  const h = harness(t)
+  h.auto.notePresence({ accountId: 'qq:10001', type: 'private', peerId: '20002', focused: true })
+  h.advance(20_000)
+  assert.equal(h.auto.handleEvent('qq:10001', themEvent()).skipped, 'focused')
+  h.advance(PRESENCE_TTL_MS)
+  assert.equal(h.auto.handleEvent('qq:10001', themEvent()).scheduled, true)
 })
 
 test('claim is one-shot so the focused UI and Runtime cannot both send', async (t) => {

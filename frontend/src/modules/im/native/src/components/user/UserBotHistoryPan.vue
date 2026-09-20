@@ -126,8 +126,10 @@ const JOIN_LABELS: Record<string, string> = {
 }
 const SKIP_LABELS: Record<string, string> = {
     join: '未接话',
+    hold: '先别回',
     'empty-draft': '没有可发内容',
     'empty-digest': '没有可总结的内容',
+    'no-facts': '没查到',
     error: '生成失败',
     suggest: '生成失败',
     send: '发送失败',

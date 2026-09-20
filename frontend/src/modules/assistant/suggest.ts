@@ -6,6 +6,18 @@ import {
   quietMsFor,
   type SuggestTurnMessage,
 } from './suggest-turn'
+import {
+  parseSuggestRead,
+  shouldHoldRead,
+  type SuggestRead,
+} from './suggest-read'
+
+export {
+  parseSuggestRead,
+  shouldHoldRead,
+  formatReadLine,
+  type SuggestRead,
+} from './suggest-read'
 
 export {
   PRIVATE_QUIET_MS,
@@ -30,6 +42,7 @@ export type SuggestContext = {
 export type AstrBotConfigOption = { id: string; name: string; isDefault?: boolean }
 
 export const AUTO_SEND_MS = 5000
+export const PRESENCE_HEARTBEAT_MS = 20_000
 export const BOT_DEFAULT_KEY = 'chihiro-bot-new-default'
 export const DIGEST_MAX_KEY = 'chihiro-bot-digest-max'
 export const DIGEST_MAX_DEFAULT = 120
@@ -123,6 +136,14 @@ type SuggestActions = {
   snapshot?: () => { lastMessageId: string; messages: SuggestTurnMessage[] } | null
 }
 
+type PresenceSent = {
+  accountId: string
+  type: SuggestContext['type']
+  peerId: string
+  focused: boolean
+  busy: boolean
+}
+
 export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   const shell = useShellStore()
   const context = ref<SuggestContext | null>(null)
@@ -130,6 +151,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   const menuOpen = ref(false)
   const replies = ref<SuggestReply[]>([])
   const summary = ref('')
+  const read = ref<SuggestRead | null>(null)
   const lastMessageId = ref('')
   const generating = ref(false)
   const countdownMs = ref(0)
@@ -148,6 +170,8 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   let countdownTimer: ReturnType<typeof setInterval> | undefined
   let quietTimer: ReturnType<typeof setTimeout> | undefined
   let presenceTimer: ReturnType<typeof setInterval> | undefined
+  let lastPresence: PresenceSent | null = null
+  let lastPresenceAt = 0
   let actions: SuggestActions | undefined
 
   const key = computed(() => context.value ? botConversationKey(context.value) : '')
@@ -209,6 +233,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
       }
     }
     activity.value = next
+    syncPresenceLease()
   }
 
   function listMark(type: SuggestContext['type'], peerId: string): { mode: BotMode; working: boolean } | null {
@@ -263,6 +288,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     digesting.value = false
     replies.value = []
     summary.value = ''
+    read.value = null
     lastMessageId.value = ''
     cancelCountdown()
   }
@@ -305,12 +331,14 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     actions?.send(text)
     replies.value = []
     summary.value = ''
+    read.value = null
     lastMessageId.value = ''
   }
 
   function maybeStartCountdown() {
     cancelCountdown()
     if (mode.value !== 'auto' || !enabled.value || !replies.value.length) return
+    if (shouldHoldRead(read.value)) return
     if (hasSubstantialText(actions?.inputText() || '')) return
     const best = composerReply.value || highestScoreReply(replies.value)
     if (!best) return
@@ -327,14 +355,52 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     }, 100)
   }
 
-  function postPresence(target: SuggestContext, nextFocused: boolean) {
-    void request('/api/runtime/bot/presence', {
+  function autoOn() {
+    return enabled.value && mode.value === 'auto'
+  }
+
+  function samePresence(next: PresenceSent) {
+    return Boolean(
+      lastPresence
+      && lastPresence.accountId === next.accountId
+      && lastPresence.type === next.type
+      && lastPresence.peerId === next.peerId
+      && lastPresence.focused === next.focused
+      && lastPresence.busy === next.busy,
+    )
+  }
+
+  function postPresence(target: SuggestContext | PresenceSent, nextFocused: boolean, force = false) {
+    const payload: PresenceSent = {
       accountId: target.accountId,
       type: target.type,
       peerId: target.peerId,
       focused: nextFocused,
       busy: nextFocused && operatorBusy(),
-    }).catch(() => {})
+    }
+    const now = Date.now()
+    if (!force && samePresence(payload) && now - lastPresenceAt < PRESENCE_HEARTBEAT_MS) return
+    lastPresence = payload
+    lastPresenceAt = now
+    void request('/api/runtime/bot/presence', payload).catch(() => {})
+  }
+
+  function releasePresence(target: SuggestContext | PresenceSent | null) {
+    if (!target || !lastPresence?.focused) return
+    if (botConversationKey(lastPresence) !== botConversationKey(target)) return
+    postPresence(target, false, true)
+  }
+
+  function syncPresenceLease(heartbeat = false) {
+    const target = context.value
+    const want = Boolean(target && focused.value && autoOn())
+    if (!want) {
+      if (lastPresence?.focused) releasePresence(lastPresence)
+      stopPresenceHeartbeat()
+      return
+    }
+    startPresenceHeartbeat()
+    postPresence(target!, true, heartbeat)
   }
 
   function postNudge(target: SuggestContext) {
@@ -354,32 +420,36 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   }
 
   function startPresenceHeartbeat() {
-    stopPresenceHeartbeat()
+    if (presenceTimer !== undefined) return
     presenceTimer = setInterval(() => {
-      if (focused.value && context.value) postPresence(context.value, true)
-    }, 8000)
+      if (focused.value && context.value && autoOn()) syncPresenceLease(true)
+      else stopPresenceHeartbeat()
+    }, PRESENCE_HEARTBEAT_MS)
   }
 
   function setFocused(next: boolean) {
     const target = context.value
     const was = focused.value
+    if (was === next) {
+      if (next) syncPresenceLease()
+      return
+    }
     focused.value = next
-    if (!target) return
     if (next) {
-      postPresence(target, true)
-      startPresenceHeartbeat()
+      syncPresenceLease()
       return
     }
     stopPresenceHeartbeat()
-    postPresence(target, false)
+    if (target) releasePresence(target)
     cancelQuiet()
     cancelCountdown()
-    if (was && enabled.value && mode.value === 'auto') postNudge(target)
+    if (was && enabled.value && mode.value === 'auto') postNudge(target!)
   }
 
   function clearChips() {
     replies.value = []
     summary.value = ''
+    read.value = null
     lastMessageId.value = ''
     cancelCountdown()
   }
@@ -413,11 +483,15 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
         mode: next.mode,
         configId: next.configId,
       })
-      if (version !== generation) return
+      if (version !== generation) {
+        syncPresenceLease()
+        return
+      }
       applyRuntimeMarks(result)
     } catch {
       if (version === generation) sessions.value = { ...sessions.value, [botConversationKey(target)]: current }
     }
+    syncPresenceLease()
   }
 
   async function loadConfigs() {
@@ -443,14 +517,14 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     if (!same) {
       const previous = context.value
       if (previous && focused.value) {
-        postPresence(previous, false)
+        releasePresence(previous)
         if (enabled.value && mode.value === 'auto') postNudge(previous)
       }
       discardSurface()
       autoRequested.value = new Set()
       menuOpen.value = false
       context.value = { ...next }
-      if (focused.value) postPresence(next, true)
+      syncPresenceLease()
       void hydrate(next.accountId)
     } else context.value = { ...next }
   }
@@ -472,8 +546,9 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   function clear() {
     const previous = context.value
     if (previous && focused.value && enabled.value && mode.value === 'auto') postNudge(previous)
-    if (previous) postPresence(previous, false)
+    releasePresence(previous)
     stopPresenceHeartbeat()
+    lastPresence = lastPresence ? { ...lastPresence, focused: false } : null
     focused.value = false
     discardSurface()
     autoRequested.value = new Set()
@@ -531,7 +606,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     if (!context.value || !enabled.value || operatorBusy()) return
     cancelCountdown()
     cancelQuiet()
-    if (generating.value || replies.value.length || summary.value) invalidateDraft()
+    if (generating.value || replies.value.length || summary.value || read.value) invalidateDraft()
     const wait = quietMsFor(context.value.type)
     quietTimer = setTimeout(() => {
       quietTimer = undefined
@@ -597,6 +672,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
     lastMessageId.value = input.lastMessageId
     replies.value = []
     summary.value = ''
+    read.value = null
     cancelCountdown()
     try {
       const result = await request('/api/runtime/bot/suggest', {
@@ -610,11 +686,13 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
       if (version !== generation || signal.aborted) return
       const next = parseSuggestReplies(result)
       const nextSummary = parseSuggestSummary(result)
+      const nextRead = parseSuggestRead(result)
       replies.value = next
       summary.value = nextSummary
+      read.value = nextRead
       lastMessageId.value = input.lastMessageId
       generating.value = false
-      if (!next.length && !nextSummary) {
+      if (!next.length && !nextSummary && !nextRead) {
         lastMessageId.value = ''
         return
       }
@@ -624,6 +702,7 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
       generating.value = false
       replies.value = []
       summary.value = ''
+      read.value = null
       lastMessageId.value = ''
     }
   }
@@ -637,13 +716,12 @@ export const useSuggestStore = defineStore('conversation-bot-suggest', () => {
   function onOperatorInput() {
     cancelCountdown()
     cancelQuiet()
-    if (focused.value && context.value) postPresence(context.value, true)
   }
 
   watch(() => `${shell.activeAccountId ?? ''}:${shell.activeAccount?.status ?? ''}`, clear, { flush: 'sync' })
 
   return {
-    context, sessions, menuOpen, replies, summary, lastMessageId, generating, countdownMs, countdownReplyId,
+    context, sessions, menuOpen, replies, summary, read, lastMessageId, generating, countdownMs, countdownReplyId,
     configs, configsReady, needsAstrBotSetup, enabled, mode, configId, selectedConfigLabel, highlightedId, countingDown, composerReply, config, activity, digesting, digestMax,
     bindActions, select, clear, applySnapshot, applyRuntimeMarks, listMark, persist, toggleMenu, closeMenu,
     setEnabled, setMode, setConfigId, setDigestMax, pick, sendReply, requestSuggest, requestDigest, alreadyAutoRequested,

@@ -506,7 +506,7 @@ const suggest = useSuggestStore()
 const showSuggest = computed(() => {
     if (type === 'body' || type === 'merge') return false
     const id = String(data.message_id || '')
-    return Boolean(id && suggest.lastMessageId === id && (suggest.generating || suggest.replies.length > 0))
+    return Boolean(id && suggest.lastMessageId === id && (suggest.generating || suggest.replies.length > 0 || suggest.read))
 })
 
 provide('message-content', data)

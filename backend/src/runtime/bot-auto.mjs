@@ -1,7 +1,7 @@
 import { WebSocket } from 'ws'
 import { log, logError } from './log.mjs'
 import { normalizeBotSession, sessionPeerKey } from './bot.mjs'
-import { pickAutoText } from './bot-suggest.mjs'
+import { pickAutoText, shouldHoldRead } from './bot-suggest.mjs'
 import {
   decideJoin,
   historyToSuggestMessages,
@@ -9,7 +9,7 @@ import {
   quietMsFor,
 } from './bot-turn.mjs'
 
-export const PRESENCE_TTL_MS = 15_000
+export const PRESENCE_TTL_MS = 45_000
 export const CLAIM_TTL_MS = 30 * 60_000
 
 function sessionKey(accountId, type, peerId) {
@@ -177,6 +177,13 @@ export function createBotAuto({
           steps: [{ kind: 'skip', title: '生成失败' }],
         })
         return { skipped: 'suggest' }
+      }
+      if (shouldHoldRead(result?.read)) {
+        history?.note?.({
+          accountId, type, peerId, lastMessageId, trigger: 'auto', joinReason: decision.reason, skipped: 'hold',
+          steps: [{ kind: 'skip', title: '先别回' }],
+        })
+        return { skipped: 'hold' }
       }
       const text = pickAutoText(result)
       if (!text) {

@@ -48,6 +48,7 @@ describe('IM message bubble layout contract', () => {
     expect(msgBody).toContain('padding: 0 0 0 36px')
     expect(msgBody).toContain('padding: 0 36px 0 0')
     expect(msgBody).toContain('justify-content: flex-end')
+    expect(msgBody).toContain('suggest.read')
   })
 
   it('puts HH:MM at the end of each bubble like Telegram', () => {
@@ -96,6 +97,7 @@ describe('IM message bubble layout contract', () => {
     expect(historyPan).toContain('chihiro-bot-history-points')
     expect(historyPan).toContain('chihiro-bot-history-point-link')
     expect(historyPan).toContain('chihiro-bot-think-steps')
+    expect(historyPan).toContain("'no-facts': '没查到'")
     expect(historyPan).toContain('正在处理')
     expect(historyPan).toContain('peerExcerpt')
     expect(historyPan).toContain('chihiro-bot-history-beat')

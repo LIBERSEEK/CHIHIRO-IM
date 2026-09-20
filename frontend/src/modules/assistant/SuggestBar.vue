@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { AUTO_SEND_MS, useSuggestStore, type SuggestReply } from './suggest'
+import {
+  ACTION_LABELS,
+  INTENT_LABELS,
+  formatReadLine,
+  pct,
+  shouldHoldRead,
+  visibleOptions,
+  type ActionId,
+  type IntentId,
+} from './suggest-read'
 
 const RING_RADIUS = 10
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS
@@ -13,7 +23,9 @@ const items = computed<SuggestReply[]>(() => {
   if (surface.value === 'composer') return suggest.composerReply ? [suggest.composerReply] : []
   return suggest.replies
 })
-const visible = computed(() => suggest.generating || items.value.length > 0)
+const read = computed(() => suggest.read)
+const visible = computed(() => suggest.generating || items.value.length > 0 || Boolean(read.value))
+const holding = computed(() => shouldHoldRead(read.value))
 const skeletonCount = computed(() => surface.value === 'composer' ? 1 : 3)
 const countdownProgress = computed(() => {
   if (!suggest.countingDown) return 0
@@ -34,14 +46,55 @@ function onCancel(event: Event) {
   event.stopPropagation()
   suggest.cancelCountdown()
 }
+
+function intentLabel(id: IntentId) {
+  return INTENT_LABELS[id]
+}
+
+function actionLabel(id: ActionId) {
+  return ACTION_LABELS[id]
+}
 </script>
 
 <template>
   <div v-if="visible" class="chihiro-suggest-bar" :data-surface="surface" aria-live="polite">
+    <div v-if="read && surface === 'bubble' && !suggest.generating" class="chihiro-read-card">
+      <div class="chihiro-read-q">对方在问什么？</div>
+      <div class="chihiro-read-opts">
+        <span
+          v-for="item in visibleOptions(read.intent)"
+          :key="item.id"
+          class="chihiro-read-opt"
+          :class="{ top: item.id === read.intent.id }">
+          {{ intentLabel(item.id) }} {{ pct(item.p) }}
+        </span>
+      </div>
+      <div class="chihiro-read-q">现在该不该开口？</div>
+      <div class="chihiro-read-opts">
+        <span class="chihiro-read-opt" :class="{ top: read.speakNow.yes >= read.speakNow.no }">是 {{ pct(read.speakNow.yes) }}</span>
+        <span class="chihiro-read-opt" :class="{ top: read.speakNow.no > read.speakNow.yes }">否 {{ pct(read.speakNow.no) }}</span>
+      </div>
+      <div class="chihiro-read-q">建议动作</div>
+      <div class="chihiro-read-opts">
+        <span
+          v-for="item in visibleOptions(read.action)"
+          :key="item.id"
+          class="chihiro-read-opt"
+          :class="{ top: item.id === read.action.id }">
+          {{ actionLabel(item.id) }} {{ pct(item.p) }}
+        </span>
+      </div>
+      <div class="chihiro-read-score">紧急 {{ read.urgency }} / 10</div>
+      <div v-if="read.note" class="chihiro-read-note">{{ read.note }}</div>
+      <div v-if="holding" class="chihiro-read-hold">先别回，不要硬写客套。</div>
+    </div>
+    <div v-else-if="read && surface === 'composer' && !suggest.generating" class="chihiro-read-line">
+      {{ formatReadLine(read) }}
+    </div>
     <div v-if="suggest.generating" class="chihiro-suggest-skeleton" aria-hidden="true">
       <span v-for="index in skeletonCount" :key="index" />
     </div>
-    <div v-else class="chihiro-suggest-chips">
+    <div v-else-if="!suggest.generating && items.length" class="chihiro-suggest-chips">
       <div
         v-for="reply in items"
         :key="reply.id"
@@ -101,9 +154,51 @@ function onCancel(event: Event) {
   max-width: 100%;
 }
 .chihiro-suggest-bar[data-surface="bubble"] {
+  flex-direction: column;
+  align-items: flex-start;
   width: max-content;
   max-width: 100%;
   min-width: 0;
+}
+.chihiro-read-card {
+  width: min(300px, 100%);
+  padding: 8px 10px 9px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-card-1) 92%, transparent);
+  color: var(--color-font-1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.chihiro-read-q {
+  margin-top: 6px;
+  color: var(--color-font);
+  font-weight: 600;
+}
+.chihiro-read-q:first-child { margin-top: 0; }
+.chihiro-read-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+.chihiro-read-opt { color: var(--color-font-2); }
+.chihiro-read-opt.top { color: var(--color-font); }
+.chihiro-read-score {
+  margin-top: 6px;
+  color: var(--color-font);
+}
+.chihiro-read-note {
+  margin-top: 2px;
+  color: var(--color-font-2);
+}
+.chihiro-read-hold {
+  margin-top: 6px;
+  color: var(--color-font);
+}
+.chihiro-read-line {
+  width: 100%;
+  color: var(--color-font-1);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .chihiro-suggest-skeleton {
   display: flex;
@@ -173,7 +268,7 @@ function onCancel(event: Event) {
   flex: 0 0 auto;
   font-style: normal;
   color: rgb(var(--v-theme-primary));
-  font-size: 13px;
+  font-size: 18px;
   line-height: 1;
 }
 .chihiro-suggest-chip.best {
