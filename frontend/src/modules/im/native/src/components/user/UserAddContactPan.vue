@@ -157,6 +157,7 @@ import {
     addContactUi,
     applyLocalMembership,
     closeAddContact,
+    contactActionErrorMessage,
     defaultFriendMessage,
     groupAvatar,
     groupsFromContactList,
@@ -246,8 +247,7 @@ function onBackdrop() {
 }
 
 function actionError(err: unknown) {
-    const text = err instanceof Error ? err.message : String(err || '')
-    return text || $t('请求失败')
+    return contactActionErrorMessage(err, $t('请求失败'))
 }
 
 async function fallbackSearch(keyword: string): Promise<{ user: SearchUser | null; groups: SearchGroup[] }> {
@@ -386,8 +386,8 @@ async function submitApply() {
         const payload: Record<string, unknown> = {
             group_id: Number(apply.value.group.group_id),
         }
+        payload.comment = message.value
         if (form.kind === 'question') payload.answer = message.value
-        else payload.comment = message.value
         const result = await Connector.requestAction('join_group', payload)
         if (result?.already) {
             new PopInfo().add(PopType.INFO, $t('已在群中'), true)

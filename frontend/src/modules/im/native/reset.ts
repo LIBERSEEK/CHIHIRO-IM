@@ -7,6 +7,7 @@ import { useSessionHistoryStore } from './src/state/sessionHistory'
 import { useStickerStore } from './src/state/sticker'
 import { useUIStore } from './src/state/ui'
 import { resetNativeMessageRuntimeState } from './src/function/msg'
+import { clearSessionMessageCache } from './session-message-cache'
 import { resetNativeFileTasks } from './src/components/user/UserFileManager.vue'
 import { clearNativePopups } from './popups'
 import { closeNativeViewer } from './viewer'
@@ -44,6 +45,7 @@ export function resetNativeAccountState(): void {
     },
   }
   chat.messageList = []
+  clearSessionMessageCache()
   chat.mergeMsgStack = []
   chat.mergeMessageList = undefined
   chat.mergeMessageImgList = undefined

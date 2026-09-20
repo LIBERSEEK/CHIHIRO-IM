@@ -16,6 +16,7 @@ import { useContactStore } from '../im/native/src/state/contact'
 import { useUIStore } from '../im/native/src/state/ui'
 import { useSettingsStore } from '../im/native/src/state/settings'
 import { loadHistory } from '../im/native/src/function/utils/appUtil'
+import { switchSessionMessageList } from '../im/native/session-message-cache'
 import { PopInfo, popList } from '../im/native/src/function/base'
 import type { BaseChatInfoElem } from '../im/native/src/function/elements/information'
 import UserMessages from '../im/native/src/pages/user/UserMessages.vue'
@@ -136,6 +137,7 @@ function changeChat(info: BaseChatInfoElem) {
   if (chat.chatInfo.show.id === info.id && chat.chatInfo.show.type === info.type) return
   const session = contacts.baseOnMsgList.get(info.id)
   const assist = contacts.groupAssistList.find((item) => Number(item.group_id ?? item.user_id) === info.id)
+  const restored = switchSessionMessageList(chat.chatInfo.show, info, chat.messageList)
   chat.chatInfo = {
     show: {
       ...info,
@@ -144,7 +146,7 @@ function changeChat(info: BaseChatInfoElem) {
     info: { group_info: {}, user_info: {}, me_info: {}, group_members: [],
       group_files: {}, group_sub_files: {}, jin_info: { list: [], pages: 0 } },
   }
-  chat.messageList = []
+  chat.messageList = restored
   chat.mergeMessageList = undefined
   ui.canLoadHistory = true
   ui.nowGetHistory = false

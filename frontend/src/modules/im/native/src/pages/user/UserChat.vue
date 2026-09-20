@@ -607,12 +607,9 @@
                                     'https://p.qlogo.cn/gh/' + data.group_id + '/' + data.group_id + '/0'">
                             <div>
                                 <p>
-                                    {{ data.group_name ?
-                                        data.group_name : data.remark === data.nickname ?
-                                            data.nickname : data.remark + '（' + data.nickname + '）'
-                                    }}
+                                    {{ getShowName(data.group_name || data.nickname, data.remark) }}
                                 </p>
-                                <span>{{ data.group_id ? $t('群组') : $t('好友') }}</span>
+                                <span>{{ forwardKindLabel(data) }}</span>
                             </div>
                         </div>
                     </div>
@@ -636,9 +633,14 @@ import { useWorkspace } from '@/modules/workspace/workspace'
 import { createHostedAgentNavigation } from '@/modules/agent/native/src/navigation'
 import { useRouter } from 'vue-router'
 import {
+    collectForwardContacts,
     forwardContactKey,
+    forwardContactKind,
     hasOutgoingContent as hasComposerContent,
+    matchesForwardSearch,
     prioritizeForwardContacts,
+    resolveForwardTarget,
+    type ForwardContact,
 } from '@chihiro/im-native/chat-interaction'
 import { chatHistoryRequestParams } from '@chihiro/im-native/history-request'
 import SendUtil from '@renderer/function/sender'
@@ -2593,8 +2595,38 @@ function consoleLogMsg() {
     closeMsgMenu()
 }
 
+function sessionForwardSources() {
+    return [
+        ...contactStore.onMsgList,
+        ...contactStore.groupAssistList,
+        ...contactStore.baseOnMsgList.values(),
+    ] as Array<UserFriendElem & UserGroupElem>
+}
+
+function allForwardContacts() {
+    return collectForwardContacts(
+        contactStore.userList,
+        sessionForwardSources(),
+    )
+}
+
+function rankedForwardContacts(contacts = allForwardContacts()) {
+    return prioritizeForwardContacts(
+        contacts,
+        [...contactStore.onMsgList].reverse(),
+    )
+}
+
+function forwardKindLabel(data: ForwardContact) {
+    if (isFriendContact(contactStore.userList, data.user_id ?? 0)) return $t('好友')
+    const kind = forwardContactKind(data)
+    if (kind === 'temp') return $t('临时会话')
+    if (kind === 'group') return $t('群组')
+    return $t('好友')
+}
+
 function cancelForward() {
-    forwardList.value = contactStore.userList
+    forwardList.value = allForwardContacts()
     tags.value.showForwardPan = false
     selectedForwardAction.value = 'single-message'
     closeMsgMenu()
@@ -2602,17 +2634,8 @@ function cancelForward() {
 
 function searchForward(event: Event) {
     const value = (event.target as HTMLInputElement).value
-    forwardList.value = contactStore.userList.filter(
-        (item: UserFriendElem & UserGroupElem) => {
-            const name = (
-                item.user_id? item.nickname + item.remark: item.group_name
-            ).toLowerCase()
-            const id = item.user_id ? item.user_id : item.group_id
-            return (
-                name.indexOf(value.toLowerCase()) !== -1 ||
-                id.toString() === value
-            )
-        },
+    forwardList.value = rankedForwardContacts(
+        allForwardContacts().filter((item) => matchesForwardSearch(item, value)),
     )
 }
 
@@ -2659,10 +2682,7 @@ function dataUrlToFile(dataurl: string, name = 'image.png') {
 function showForWard(action: ForwardAction = 'single-message') {
     selectedForwardAction.value = action
     tags.value.showForwardPan = true
-    forwardList.value = prioritizeForwardContacts(
-        contactStore.userList,
-        [...contactStore.onMsgList].reverse(),
-    )
+    forwardList.value = rankedForwardContacts()
     closeMsgMenu()
 }
 
@@ -2732,14 +2752,15 @@ function forwardMsg(data: UserFriendElem & UserGroupElem) {
     const sourceScope = captureChatScope()
     const forwardAction = selectedForwardAction.value
     const msgData = selectedMsg.value ? cloneMessagePayload(selectedMsg.value) : null
-    const id = data.group_id ? data.group_id : data.user_id
-    const targetId = String(id)
-    const targetType = data.group_id ? 'group' : 'user'
+    const target = resolveForwardTarget(data)
+    const targetId = target.sendId
+    const targetType = target.type
+    const sessionId = Number(target.peerId)
     const msgList = chatStore.messageList.filter((item) => {
         return multipleSelectList.value.includes(item.message_id)
     })
     const shouldPreShow = () =>
-        String(chat.show.id) === targetId && chat.show.type === targetType
+        String(chat.show.id) === target.peerId && chat.show.type === targetType
 
     if (forwardAction !== 'single-message' && msgList.length === 0) {
         cancelForward()
@@ -2890,11 +2911,11 @@ function forwardMsg(data: UserFriendElem & UserGroupElem) {
         uiStore.popBoxList.push(popInfo)
     }
     cancelForward()
-    if(contactStore.baseOnMsgList.get(id) == undefined) {
-        contactStore.baseOnMsgList.set(id, data)
+    if (sessionId && contactStore.baseOnMsgList.get(sessionId) == undefined) {
+        contactStore.baseOnMsgList.set(sessionId, data)
     }
     nextTick(() => {
-        const user = document.getElementById('user-' + id)
+        const user = document.getElementById('user-' + sessionId)
         if (user) {
             user.click()
         }
@@ -4940,6 +4961,15 @@ function exitWin() {
     width: min(420px, calc(100% - 48px)) !important;
     max-height: min(80%, 640px) !important;
     height: min(70%, 640px) !important;
+}
+.user-skin.chat-pan > .forward-pan > div.card > input {
+    margin: 0 12px;
+    padding: 0 12px;
+    box-sizing: border-box;
+}
+.user-skin.chat-pan > .forward-pan > div.card > div {
+    padding: 0 12px 12px;
+    box-sizing: border-box;
 }
 .forward-float-enter-from > div.card,
 .forward-float-leave-to > div.card {

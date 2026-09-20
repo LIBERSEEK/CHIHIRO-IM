@@ -1801,16 +1801,20 @@ input {
 .forward-pan > div.card > input {
     background: var(--color-card-1);
     border-radius: 7px;
-    padding: 0 10px;
+    margin: 0 10px;
+    padding: 0 12px;
     height: 40px;
     border: 0;
+    box-sizing: border-box;
 }
 .forward-pan > div.card > div {
     flex-direction: column;
     overflow-y: scroll;
     margin-top: 10px;
+    padding: 0 10px 10px;
     display: flex;
     flex: 1;
+    box-sizing: border-box;
 }
 .forward-pan > div.card > div > div {
     align-items: center;

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { joinGroupCall, mapSearchGroup, mapSearchUser } from '../src/runtime/contact-search.mjs'
+import {
+  joinGroupCall,
+  joinGroupResultMessage,
+  kernelJoinArgs,
+  mapSearchGroup,
+  mapSearchUser,
+} from '../src/runtime/contact-search.mjs'
 
 test('mapSearchUser keeps age and birthday for search tags', () => {
   assert.deepEqual(mapSearchUser({
@@ -80,4 +86,57 @@ test('joinGroupCall reuses the comment as the answer when none is given', () => 
   const call = joinGroupCall({ groupCode: '1', groupOption: 2 }, { message: '申请加入' })
   assert.equal(call.msg, '申请加入')
   assert.equal(call.joinGroupAnswer, '申请加入')
+})
+
+test('joinGroupCall copies the question answer into msg when comment is empty', () => {
+  const call = joinGroupCall({
+    groupCode: '975206796',
+    addOption: 5,
+    groupQuestion: '在哪了解到本项目的',
+    joinGroupAuth: 'tok',
+  }, { answer: 'Github' })
+  assert.equal(call.msg, 'Github')
+  assert.equal(call.joinGroupAnswer, 'Github')
+  assert.equal(call.joinGroupAuth, 'tok')
+})
+
+test('mapSearchGroup keeps joinGroupAuth from the outer search hit or penetrate', () => {
+  const fromOuter = mapSearchGroup({
+    groupCode: '975206796',
+    joinGroupAuth: 'outer-auth',
+    searchGroupInfo: {
+      groupCode: '975206796',
+      groupName: 'AstrBot 大学',
+    },
+  }, false)
+  assert.equal(fromOuter.joinGroupAuth, 'outer-auth')
+  const fromPenetrate = mapSearchGroup({
+    groupCode: '975206796',
+    groupName: 'AstrBot 大学',
+    penetrate: 'search-token',
+  }, false)
+  assert.equal(fromPenetrate.joinGroupAuth, 'search-token')
+})
+
+test('kernelJoinArgs nests source, auth, msg and answer for NTQQ joinGroup', () => {
+  assert.deepEqual(kernelJoinArgs({
+    groupCode: '975206796',
+    joinGroupAuth: 'tok',
+    msg: 'Github',
+    joinGroupAnswer: 'Github',
+  }), {
+    groupCode: '975206796',
+    option: {
+      joinGroupSource: 14,
+      joinGroupAuth: 'tok',
+      msg: 'Github',
+      joinGroupAnswer: 'Github',
+    },
+  })
+})
+
+test('joinGroupResultMessage keeps kernel errMsg and otherwise shows the result code', () => {
+  assert.equal(joinGroupResultMessage({ result: 0, errMsg: '' }), '')
+  assert.equal(joinGroupResultMessage({ result: 2, errMsg: '已在群中' }), '已在群中')
+  assert.equal(joinGroupResultMessage({ result: 2 }), '申请失败（错误码 2）')
 })

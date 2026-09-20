@@ -1,6 +1,12 @@
 // chihiro-recent-contact-unread
 import original, { plugin_init as ssqqInit } from './index.ssqq.mjs'
-import { joinGroupCall, mapSearchGroup, mapSearchUser } from './contact-search.mjs'
+import {
+  joinGroupCall,
+  joinGroupResultMessage,
+  kernelJoinArgs,
+  mapSearchGroup,
+  mapSearchUser,
+} from './contact-search.mjs'
 
 const WRAP_MARK = 'chihiro-recent-contact-unread'
 const UNREAD_KEYS = [
@@ -206,7 +212,7 @@ async function searchGroupHits(core, keyword) {
         [{
           keyWords: key,
           groupNum: 25,
-          exactSearch: false,
+          exactSearch: /^\d+$/.test(key),
           penetrate: '',
         }],
         (r) => !r || r.result === 0 || r.result === undefined,
@@ -214,7 +220,15 @@ async function searchGroupHits(core, keyword) {
         1,
         5000,
       )
-      if (Array.isArray(ret?.groupInfos) && ret.groupInfos.length) return ret.groupInfos
+      if (Array.isArray(ret?.groupInfos) && ret.groupInfos.length) {
+        const penetrate = String(ret.penetrate || '')
+        if (penetrate) {
+          for (const hit of ret.groupInfos) {
+            if (hit && typeof hit === 'object' && !hit.penetrate) hit.penetrate = penetrate
+          }
+        }
+        return ret.groupInfos
+      }
     } catch {
       // Fall through to the exact group-number lookup.
     }
@@ -265,7 +279,7 @@ async function addFriend(core, payload) {
   return { already: false, user_id: userId, uid, submitted: true, result: result ?? null }
 }
 
-async function joinGroup(core, payload) {
+async function joinGroup(core, payload, logger) {
   const groupId = idOf(payload, 'group_id', 'groupId')
   if (!/^\d+$/.test(groupId) || /^0+$/.test(groupId)) throw new Error('invalid_group')
   const groups = await core.apis.GroupApi.getGroups(false)
@@ -274,29 +288,40 @@ async function joinGroup(core, payload) {
   }
   let found = null
   try {
-    found = await core.apis.GroupApi.searchGroup(groupId)
+    const hits = await searchGroupHits(core, groupId)
+    found = Array.isArray(hits) ? hits.find((hit) => mapSearchGroup(hit, false)?.group_id === groupId) || hits[0] : null
   } catch {
     found = null
+  }
+  if (!found && typeof core.apis?.GroupApi?.searchGroup === 'function') {
+    try {
+      found = await core.apis.GroupApi.searchGroup(groupId)
+    } catch {
+      found = null
+    }
   }
   const call = joinGroupCall(found, { ...payload, group_id: groupId })
   if (!call.groupCode) throw new Error('群不存在')
   if (call.option === 3) throw new Error('该群不允许加入')
   const groupService = core.context.session.getGroupService()
   if (typeof groupService?.joinGroup !== 'function') throw new Error('当前内核没有入群接口')
+  const args = kernelJoinArgs(call)
   let result
   try {
-    result = await Promise.resolve(groupService.joinGroup({
-      groupCode: call.groupCode,
-      joinGroupAuth: call.joinGroupAuth,
-      msg: call.msg,
-      joinGroupAnswer: call.joinGroupAnswer,
-    }))
-  } catch {
-    result = await Promise.resolve(groupService.joinGroup(call.groupCode, call.joinGroupAuth))
+    result = await Promise.resolve(groupService.joinGroup(args))
+  } catch (error) {
+    logger?.warn?.('[chihiro] join_group object call failed', error?.message || error)
+    result = await Promise.resolve(groupService.joinGroup(args.groupCode, args.option))
   }
-  if (result && typeof result === 'object' && result.result != null && Number(result.result) !== 0) {
-    throw new Error(result.errMsg || result.msg || '申请失败')
+  const fail = joinGroupResultMessage(result)
+  if (fail) {
+    logger?.warn?.(
+      `[chihiro] join_group kernel ${groupId} option=${call.option} auth=${call.joinGroupAuth ? 'yes' : 'no'}`,
+      result,
+    )
+    throw new Error(fail)
   }
+  logger?.info?.(`[chihiro] join_group submitted ${groupId} option=${call.option} auth=${call.joinGroupAuth ? 'yes' : 'no'}`)
   return {
     already: false,
     group_id: groupId,
@@ -315,10 +340,10 @@ function wrapContactActions(ctx) {
   const extras = {
     search_contact: makeAction((payload) => searchContact(core, payload)),
     add_friend: makeAction((payload) => addFriend(core, payload)),
-    join_group: makeAction((payload) => joinGroup(core, payload)),
+    join_group: makeAction((payload) => joinGroup(core, payload, ctx.logger)),
   }
+  if (ctx.actions.get[CONTACT_MARK]) return
   const originalGet = ctx.actions.get.bind(ctx.actions)
-  if (originalGet[CONTACT_MARK]) return
   const wrapped = (name) => {
     const existing = originalGet(name)
     if (existing) return existing

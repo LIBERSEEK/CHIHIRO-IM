@@ -115,9 +115,10 @@ export async function loadHistory(info: BaseChatInfoElem) {
     const authStore = useAuthStore()
     const chatStore = useChatStore()
     const settingsStore = useSettingsStore()
-    chatStore.messageList = []
-    // 本地有数据时立即显示，同时仍发网络请求以获取最新消息（避免遗漏）
+    // Keep a pane that changeChat already restored. Web IM has no SQLite, and
+    // NapCat temp C2C history is empty — wiping here dropped live messages.
     if (
+        chatStore.messageList.length === 0 &&
         settingsStore.sysConfig.enable_local_history &&
         settingsStore.sysConfig.mixed_load_messages !== false
     ) {

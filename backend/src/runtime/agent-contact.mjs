@@ -9,7 +9,7 @@ function digits(value, kind) {
 
 function unsupportedContact(error) {
   const message = error?.message || String(error || '')
-  if (!/不支持的Api/i.test(message)) return error
+  if (!/不支持的\s*Api/i.test(message)) return error
   const next = new Error('当前 QQ 实例未加载加好友/入群能力，请重启该账号后再试')
   next.deliveryState = 'failed'
   return next

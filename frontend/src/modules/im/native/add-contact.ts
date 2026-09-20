@@ -109,9 +109,17 @@ export function groupAvatar(groupId: string | number): string {
   return `https://p.qlogo.cn/gh/${groupId}/${groupId}/0`
 }
 
+export const UNSUPPORTED_CONTACT_HINT = '当前 QQ 实例未加载加好友/入群能力，请重启该账号后再试'
+
 export function isUnsupportedContactAction(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error || '')
-  return /不支持的Api/i.test(text)
+  return /不支持的\s*Api/i.test(text)
+}
+
+export function contactActionErrorMessage(error: unknown, fallback = '请求失败'): string {
+  if (isUnsupportedContactAction(error)) return UNSUPPORTED_CONTACT_HINT
+  const text = error instanceof Error ? error.message : String(error || '')
+  return text || fallback
 }
 
 export function userFromStranger(data: unknown, already = false): SearchUser | null {

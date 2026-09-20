@@ -132,8 +132,8 @@ test('join_group maps missing NapCat actions to a restart hint', async (t) => {
         status: 'failed',
         retcode: 200,
         data: null,
-        message: '不支持的Api join_group',
-        wording: '不支持的Api join_group'
+        message: '不支持的 API join_group',
+        wording: '不支持的 API join_group'
       })
     }
   }

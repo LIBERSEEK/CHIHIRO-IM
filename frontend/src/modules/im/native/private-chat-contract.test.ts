@@ -8,6 +8,7 @@ const workspace = readFileSync(new URL('../../workspace/WorkspaceModule.vue', im
 const handlers = readFileSync(new URL('./src/function/msg.ts', import.meta.url), 'utf8')
 const sendUtil = readFileSync(new URL('./src/function/utils/msgUtil.ts', import.meta.url), 'utf8')
 const messages = readFileSync(new URL('./src/pages/user/UserMessages.vue', import.meta.url), 'utf8')
+const appUtil = readFileSync(new URL('./src/function/utils/appUtil.ts', import.meta.url), 'utf8')
 
 describe('group-member private chat', () => {
   it('opens the session through workspace instead of a list-item DOM click', () => {
@@ -39,5 +40,14 @@ describe('group-member private chat', () => {
     expect(sendUtil).toContain('send_private_msg')
     expect(sendUtil).not.toContain('send_temp_msg')
     expect(chat).toContain('chatHistoryRequestParams')
+  })
+
+  it('keeps live temp messages in RAM when switching sessions', () => {
+    expect(workspace).toContain('switchSessionMessageList')
+    expect(workspace).toMatch(/chat\.messageList = restored/)
+    expect(appUtil).not.toMatch(/chatStore\.messageList = \[\]/)
+    expect(handlers).toContain('appendSessionMessages')
+    expect(handlers).toContain('rememberSessionMessages')
+    expect(handlers).toMatch(/chatStore\.messageList\.length > 0/)
   })
 })

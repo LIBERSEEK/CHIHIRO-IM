@@ -14,6 +14,10 @@ vi.mock('./src/function/utils/systemUtil', () => ({
 }))
 
 import { resetNativeAccountState } from './reset'
+import {
+  peekSessionMessages,
+  rememberSessionMessages,
+} from './session-message-cache'
 import { setNativeViewerHost } from './viewer'
 import { useAuthStore } from './src/state/auth'
 import { useChatStore } from './src/state/chat'
@@ -55,6 +59,7 @@ describe('resetNativeAccountState', () => {
     const chat = useChatStore()
     chat.chatInfo.show = { type: 'user', id: 2, name: 'old', avatar: 'old' }
     chat.messageList = [{ message_id: 1 }]
+    rememberSessionMessages({ type: 'user', id: 2, temp: 3 }, [{ message_id: 1 }])
     chat.mergeMsgStack = [{} as never]
     chat.mergeMessageList = [{}]
     chat.mergeMessageImgList = ['old']
@@ -102,6 +107,7 @@ describe('resetNativeAccountState', () => {
     })
     expect(contacts.baseOnMsgList.size).toBe(0)
     expect(chat.messageList).toEqual([])
+    expect(peekSessionMessages({ type: 'user', id: 2, temp: 3 })).toEqual([])
     expect(chat.mergeMsgStack).toEqual([])
     expect(chat.mergeMessageList).toBeUndefined()
     expect(chat.mergeMessageImgList).toBeUndefined()

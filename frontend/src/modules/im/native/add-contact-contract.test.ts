@@ -7,6 +7,7 @@ const pan = readFileSync(new URL('./src/components/user/UserAddContactPan.vue', 
 const workspace = readFileSync(new URL('../../workspace/WorkspaceModule.vue', import.meta.url), 'utf8')
 const chat = readFileSync(new URL('./src/pages/user/UserChat.vue', import.meta.url), 'utf8')
 const plugin = readFileSync(new URL('../../../../../backend/src/runtime/chihiro-napcat-unread-plugin.mjs', import.meta.url), 'utf8')
+const inject = readFileSync(new URL('../../../../../backend/src/runtime/chihiro-napcat-unread.mjs', import.meta.url), 'utf8')
 
 describe('add friend/group', () => {
   it('opens the search pan from the plus menu instead of a stub toast', () => {
@@ -28,6 +29,7 @@ describe('add friend/group', () => {
     expect(pan).toContain("form.kind === 'question'")
     expect(pan).toContain("form.kind === 'verify'")
     expect(pan).toContain("form.kind === 'forbid'")
+    expect(pan).toContain('payload.comment = message.value')
     expect(pan).toContain("payload.answer = message.value")
   })
 
@@ -52,6 +54,14 @@ describe('add friend/group', () => {
   it('registers search_contact beside add_friend and join_group', () => {
     expect(plugin).toContain('search_contact:')
     expect(plugin).toContain('joinGroupCall')
+    expect(plugin).toContain('kernelJoinArgs')
     expect(plugin).toContain("call.option === 3")
+  })
+
+  it('copies contact-search.mjs into the NapCat plugin dir so join_group can load', () => {
+    expect(plugin).toContain("from './contact-search.mjs'")
+    expect(inject).toContain("CONTACT_SEARCH_FILE = 'contact-search.mjs'")
+    expect(inject).toContain('writeIfChanged(path.join(pluginDir, CONTACT_SEARCH_FILE)')
+    expect(pan).toContain('contactActionErrorMessage')
   })
 })

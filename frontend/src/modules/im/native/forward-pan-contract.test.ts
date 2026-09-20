@@ -16,4 +16,14 @@ describe('forward message overlay', () => {
     expect(chat).toContain('.user-skin.chat-pan > .forward-pan')
     expect(chat).toContain('right: var(--chihiro-session-rail-width)')
   })
+
+  it('lists temp sessions and insets the search field', () => {
+    expect(chat).toContain('collectForwardContacts')
+    expect(chat).toContain('resolveForwardTarget')
+    expect(chat).toContain("$t('临时会话')")
+    expect(chat).toMatch(/\.user-skin\.chat-pan > \.forward-pan > div\.card > input[\s\S]{0,120}margin:\s*0 12px/)
+    expect(chat).toMatch(/\.user-skin\.chat-pan > \.forward-pan > div\.card > div[\s\S]{0,80}padding:\s*0 12px 12px/)
+    expect(css).toMatch(/\.forward-pan > div\.card > input[\s\S]{0,160}margin:\s*0 10px/)
+    expect(css).toMatch(/\.forward-pan > div\.card > div[\s\S]{0,160}padding:\s*0 10px 10px/)
+  })
 })

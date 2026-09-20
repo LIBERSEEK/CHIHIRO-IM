@@ -67,6 +67,7 @@ import {
     runForNativeAccount,
 } from './asyncAccountScope'
 import { isEmptyChatHistoryResponse } from '@chihiro/im-native/history-request'
+import { appendSessionMessages, clearSessionMessageCache, rememberSessionMessages } from '@chihiro/im-native/session-message-cache'
 import { confirmPendingSend, failPendingSend, findLatestPendingSend } from '@chihiro/im-native/pending-send'
 import { isNapcatDummyPeer, resolveMessageSession } from '@chihiro/im-native/message-peer'
 import { useAuthStore } from '@renderer/state/auth'
@@ -1826,8 +1827,9 @@ async function saveMsg(msg: any, append = undefined as undefined | string) {
             replaceMessageListInPlace(merged)
         } else {
             if (
-                settingsStore.sysConfig.enable_local_history &&
-                settingsStore.sysConfig.mixed_load_messages !== false
+                chatStore.messageList.length > 0 ||
+                (settingsStore.sysConfig.enable_local_history &&
+                settingsStore.sysConfig.mixed_load_messages !== false)
             ) {
                 const merged = mergeMessagesByIdAndTime(chatStore.messageList, list)
                 replaceMessageListInPlace(merged)
@@ -2088,6 +2090,7 @@ function mergeMessagesByIdAndTime(current: any[], incoming: any[]): any[] {
 function replaceMessageListInPlace(next: any[]) {
     const chatStore = useChatStore()
     chatStore.messageList.splice(0, chatStore.messageList.length, ...next)
+    rememberSessionMessages(chatStore.chatInfo.show, chatStore.messageList)
 }
 
 export async function getMessageList(list: any[] | undefined) {
@@ -2312,6 +2315,15 @@ function newMsg(_: string, data: any) {
                 Umami.trackEvent('show_qed', { times: qed_try_times })
             }
             qed_try_times++
+        } else if (id && list.length > 0) {
+            const otherShow = {
+                type: peer.isGroup ? 'group' : 'user',
+                id,
+                temp: peer.isTemp ? peer.sourceGroupId : undefined,
+            }
+            getMessageList(list).then((processed) => {
+                if (processed?.length) appendSessionMessages(otherShow, processed)
+            }).catch(() => {})
         }
 
         // 通知判定预处理 ============================================
@@ -2524,6 +2536,7 @@ export function resetRimtime(resetAll = false) {
             },
         })
         chatStore.messageList = []
+        clearSessionMessageCache()
         // Reset connection store
         const connectionStore = useConnectionStore()
         connectionStore.heartbeatTime = -1

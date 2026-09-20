@@ -7,8 +7,10 @@ import {
   groupMemberLabel,
   isFriendContact,
   isJoinedGroupContact,
+  contactActionErrorMessage,
   isUnsupportedContactAction,
   joinGroupForm,
+  UNSUPPORTED_CONTACT_HINT,
   userFromStranger,
   userSearchTags,
 } from './add-contact'
@@ -91,6 +93,10 @@ describe('search tags', () => {
 describe('search fallback', () => {
   it('maps stranger info and joined groups when search_contact is missing', () => {
     expect(isUnsupportedContactAction(new Error('不支持的API search_contact'))).toBe(true)
+    expect(isUnsupportedContactAction(new Error('不支持的 API join_group'))).toBe(true)
+    expect(contactActionErrorMessage(new Error('不支持的API join_group'))).toBe(UNSUPPORTED_CONTACT_HINT)
+    expect(contactActionErrorMessage(new Error('不支持的 API join_group'))).toBe(UNSUPPORTED_CONTACT_HINT)
+    expect(contactActionErrorMessage(new Error('该群不允许加入'))).toBe('该群不允许加入')
     expect(userFromStranger({ user_id: 732085886, nickname: '老婆666', age: 36 }, false)).toMatchObject({
       user_id: '732085886',
       nickname: '老婆666',
