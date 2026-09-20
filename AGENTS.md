@@ -7,10 +7,10 @@ Read this before changing code. The old Stapxs **overlay** path is gone.
 ## Unified engineering migration (2026-09-14)
 
 The user has authorized the `frontend/`, `backend/`, `deploy/` migration in
-`docs/development.md` and `docs/frontend-unification-plan.md`. Those paths
-are the destination for new product code. The sections below describe the
-legacy runtime while migration is in progress, not a requirement to retain
-separate frontend applications.
+`docs/development.md`. Local planning notes live in `plan/` and are not
+published. Those paths are the destination for new product code. The sections
+below describe the legacy runtime while migration is in progress, not a
+requirement to retain separate frontend applications.
 
 - `frontend/src/modules/{im,agent,assistant}` owns migrated product UI. Extract
   the existing User* dependency closure with source/version/license records;

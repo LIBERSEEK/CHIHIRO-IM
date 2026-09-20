@@ -37,7 +37,7 @@ describe('shell view state', () => {
     expect(state.showRuntimeBootLoading).toBe(false)
     expect(state.showLoginPanel).toBe(true)
     expect(state.showEmptyLauncher).toBe(true)
-    expect(state.loginMessage).toBe('点击左侧 + 添加并登录 QQ 账号')
+    expect(state.loginMessage).toBe('点击左侧 + 添加并登录账号')
   })
 
   it('keeps pending new-account login clean when runtime still reports the previous logged-in message', () => {
@@ -75,5 +75,20 @@ describe('shell view state', () => {
   it('does not cover non-account routes or IM settings with the login panel', () => {
     expect(resolveShellViewState({ ...base, routeName: 'customers' }).showLoginPanel).toBe(false)
     expect(resolveShellViewState({ ...base, routeSettings: '1' }).showLoginPanel).toBe(false)
+  })
+
+  it('shows the Douyin browser-setup panel instead of a QQ QR card', () => {
+    const state = resolveShellViewState({
+      ...base,
+      adding: true,
+      pendingAdd: true,
+      loginClient: 'douyin',
+      runtimePhase: 'browser_setup',
+      runtimeMessage: '选择本机 Chrome，然后登录抖音账号',
+    })
+    expect(state.loginInProgress).toBe(true)
+    expect(state.showLoginPanel).toBe(true)
+    expect(state.showEmptyLauncher).toBe(false)
+    expect(state.loginMessage).toBe('选择本机 Chrome，然后登录抖音账号')
   })
 })

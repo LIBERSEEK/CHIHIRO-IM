@@ -1,13 +1,21 @@
 import type { AccountContext } from '@/contracts'
+import qqSvg from 'simple-icons/icons/qq.svg?raw'
+import tiktokSvg from 'simple-icons/icons/tiktok.svg?raw'
 
 export interface AccountMenuPosition {
   x: number
   y: number
 }
 
+export function accountPlatformLabel(platform: AccountContext['platform']): string {
+  if (platform === 'douyin') return '抖音'
+  if (platform === 'qq') return 'QQ'
+  return platform
+}
+
 export function accountTitle(account: AccountContext, options?: { active?: boolean }): string {
   const viewHint = options?.active ? ' · 再点查看资料' : ''
-  return `${account.label} · ${account.platform.toUpperCase()}${account.status === 'online' ? ' · 在线' : ' · 离线'}${account.botEnabled ? ' · Bot' : ''}${viewHint} · 右键管理`
+  return `${account.label} · ${accountPlatformLabel(account.platform)}${account.status === 'online' ? ' · 在线' : ' · 离线'}${account.platform === 'qq' && account.botEnabled ? ' · Bot' : ''}${viewHint} · 右键管理`
 }
 
 export type AccountAvatarClickAction = 'select' | 'open-profile' | 'close-profile'
@@ -58,7 +66,47 @@ export function accountUnreadLabel(account: AccountContext): string {
 }
 
 export function shouldShowBotBadge(account: AccountContext): boolean {
-  return account.botEnabled === true
+  return account.platform === 'qq' && account.botEnabled === true
+}
+
+export type AccountPlatformBrand = {
+  platform: 'qq' | 'douyin'
+  slug: string
+  title: string
+  hex: string
+  path: string
+}
+
+function simpleIconPath(svg: string): string {
+  const match = /\sd="([^"]+)"/.exec(svg)
+  if (!match?.[1]) throw new Error('simple-icons svg is missing a path')
+  return match[1]
+}
+
+const QQ_BRAND: AccountPlatformBrand = {
+  platform: 'qq',
+  slug: 'qq',
+  title: 'QQ',
+  hex: '1EBAFC',
+  path: simpleIconPath(qqSvg),
+}
+
+const DOUYIN_BRAND: AccountPlatformBrand = {
+  platform: 'douyin',
+  slug: 'tiktok',
+  title: '抖音',
+  hex: '000000',
+  path: simpleIconPath(tiktokSvg),
+}
+
+export function accountPlatformBrand(platform: AccountContext['platform']): AccountPlatformBrand | null {
+  if (platform === 'qq') return QQ_BRAND
+  if (platform === 'douyin') return DOUYIN_BRAND
+  return null
+}
+
+export function accountPlatformBadge(platform: AccountContext['platform']): 'qq' | 'douyin' | null {
+  return accountPlatformBrand(platform)?.platform ?? null
 }
 
 export function canOpenNapCatSettings(account: AccountContext): boolean {

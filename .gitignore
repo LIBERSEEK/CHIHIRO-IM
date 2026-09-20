@@ -1,5 +1,7 @@
 .DS_Store
 node_modules/
+# Local development plans; not published to GitHub.
+/plan/
 .cache/
 dist/
 *.log

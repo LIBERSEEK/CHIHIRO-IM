@@ -34,6 +34,29 @@ describe('runtime account shell', () => {
     expect(() => parseRuntimeAccounts({})).toThrow()
   })
 
+  it('accepts Douyin accounts without treating them as QQ OneBot identities', () => {
+    const dy = accountId('douyin:abc_1')
+    const parsed = parseRuntimeAccounts({
+      accounts: { activeId: dy, accounts: [
+        { id: a, nickname: 'QQ 号', online: true, obToken: 'secret' },
+        { id: dy, nickname: '创作者', platform: 'douyin', client: 'douyin', online: true, obToken: 'should-not-be-stored' },
+      ] },
+    })
+    expect(parsed.accounts[1]).toEqual({ id: dy, label: '创作者', platform: 'douyin', status: 'online' })
+    expect(parsed.activeId).toBe(dy)
+  })
+
+  it('keeps Douyin avatars served from the growth runtime', () => {
+    const dy = accountId('douyin:abc_1')
+    const avatar = '/api/runtime/growth/accounts/douyin%3Aabc_1/avatar?v=9'
+    const parsed = parseRuntimeAccounts({
+      accounts: { activeId: dy, accounts: [
+        { id: dy, nickname: '创作者', platform: 'douyin', online: true, avatar },
+      ] },
+    })
+    expect(parsed.accounts[0].avatar).toBe(avatar)
+  })
+
   it('loads server selection then preserves a local choice across refresh', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(state())))
     const shell = useShellStore()
@@ -238,6 +261,36 @@ describe('runtime account shell', () => {
     }))
     expect(shell.activeAccountId).toBe(b)
     expect(shell.adding).toBe(false)
+  })
+
+  it('starts Douyin as a browser-setup login instead of a QQ QR session', async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({
+      ...state(null, []),
+      phase: 'browser_setup',
+      pendingAdd: true,
+      growth: {
+        loginClient: 'douyin',
+        pendingAdd: true,
+        phase: 'browser_setup',
+        browserPath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        browserDetected: true,
+        task: { running: false },
+      },
+    }))
+    vi.stubGlobal('fetch', fetcher)
+    const shell = useShellStore()
+    const pending = shell.addAccount('douyin')
+    expect(shell.pendingAdd).toBe(true)
+    expect(shell.loginClient).toBe('douyin')
+    expect(shell.runtimePhase).toBe('browser_setup')
+    expect(shell.runtimeMessage).toBe('选择本机 Chrome，然后登录抖音账号')
+    await pending
+    expect(fetcher).toHaveBeenCalledWith('/api/runtime/start', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ client: 'douyin', mode: 'new' }),
+    }))
+    expect(shell.runtimePhase).toBe('browser_setup')
+    expect(shell.browserDetected).toBe(true)
   })
 
   it('enters a clean pending-new-account state before the start response returns', async () => {

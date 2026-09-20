@@ -4,6 +4,7 @@ import { Check, Copy } from '@lucide/vue'
 
 import type { AccountContext } from '@/contracts'
 import { accountAvatarSrc, accountQzoneUrl, accountUin, openExternalFrame } from '@/app/account-ui'
+import AccountPlatformBadge from '@/app/AccountPlatformBadge.vue'
 
 type AnchorRect = {
   top: number
@@ -92,14 +93,17 @@ onBeforeUnmount(() => {
       @click.stop
     >
       <div class="account-profile-head">
-        <img v-if="avatarSrc" class="account-profile-avatar" :src="avatarSrc" alt="" referrerpolicy="no-referrer" />
-        <span v-else class="account-profile-avatar account-profile-avatar-fallback">{{ account.label.slice(0, 1) }}</span>
+        <div class="account-profile-avatar-wrap">
+          <img v-if="avatarSrc" class="account-profile-avatar" :src="avatarSrc" alt="" referrerpolicy="no-referrer" />
+          <span v-else class="account-profile-avatar account-profile-avatar-fallback">{{ account.label.slice(0, 1) }}</span>
+          <AccountPlatformBadge :platform="account.platform" />
+        </div>
         <div class="account-profile-head-main">
           <div class="account-profile-name-row">
             <span class="account-profile-name">{{ account.label }}</span>
             <span class="account-profile-dot" :class="{ online: account.status === 'online' }" />
           </div>
-          <div class="account-profile-qq">
+          <div v-if="account.platform === 'qq'" class="account-profile-qq">
             <span>QQ {{ uin || '—' }}</span>
             <button
               v-if="uin"
@@ -113,10 +117,13 @@ onBeforeUnmount(() => {
               <Copy v-else :size="14" />
             </button>
           </div>
+          <div v-else class="account-profile-qq">
+            <span>抖音账号</span>
+          </div>
         </div>
       </div>
 
-      <div class="account-profile-rows">
+      <div v-if="account.platform === 'qq'" class="account-profile-rows">
         <div class="account-profile-row">
           <span class="account-profile-label">等级</span>
           <span class="account-profile-value" />
@@ -161,13 +168,28 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
 }
 .account-profile-head { display: flex; align-items: flex-start; gap: 12px; }
-.account-profile-avatar {
+.account-profile-avatar-wrap {
+  position: relative;
   width: 64px;
   height: 64px;
   flex: 0 0 64px;
+}
+.account-profile-avatar {
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   object-fit: cover;
   background: #3a3a3c;
+}
+.account-profile-avatar-wrap :deep(.account-platform-badge) {
+  width: 20px;
+  height: 20px;
+  right: -2px;
+  bottom: -2px;
+}
+.account-profile-avatar-wrap :deep(.account-platform-badge svg) {
+  width: 12px;
+  height: 12px;
 }
 .account-profile-avatar-fallback {
   display: grid;

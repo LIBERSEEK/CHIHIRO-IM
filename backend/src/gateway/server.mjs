@@ -217,6 +217,7 @@ const server = http.createServer(async (req, res) => {
       && url.pathname !== '/api/runtime/agent/stream'
       && url.pathname !== '/api/runtime/state'
       && url.pathname !== '/api/runtime/qq/qr'
+      && url.pathname !== '/api/runtime/bot/presence'
       && !url.pathname.startsWith('/api/runtime/chatui')
     ) {
       log('gw', req.method, url.pathname)

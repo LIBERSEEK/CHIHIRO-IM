@@ -15,12 +15,14 @@ export interface ConversationKey {
   kind: ConversationKind
 }
 
+export type AccountPlatform = 'qq' | 'douyin'
+
 export interface AccountContext {
   id: AccountId
   label: string
   avatar?: string
   instanceId?: string
-  platform: 'qq'
+  platform: AccountPlatform
   status: 'offline' | 'connecting' | 'online' | 'error'
   botEnabled?: boolean
   botWired?: boolean
@@ -71,6 +73,20 @@ export interface ApiError {
 
 export function accountId(value: string): AccountId {
   return value as AccountId
+}
+
+export function isQqAccountId(id: string): boolean {
+  return /^qq:\d+$/.test(id)
+}
+
+export function isDouyinAccountId(id: string): boolean {
+  return /^douyin:[A-Za-z0-9._-]+$/.test(id)
+}
+
+export function accountPlatformFromId(id: string): AccountPlatform | null {
+  if (isDouyinAccountId(id)) return 'douyin'
+  if (isQqAccountId(id)) return 'qq'
+  return null
 }
 
 export function conversationId(value: string): ConversationId {

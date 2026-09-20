@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { AccountContext, AccountId } from '../contracts'
-import { accountId } from '../contracts'
+import type { AccountContext, AccountId, AccountPlatform } from '../contracts'
+import { accountId, accountPlatformFromId, isDouyinAccountId } from '../contracts'
 import {
   filterUnreadPeers,
   readAccountSessionNotice,
@@ -41,24 +41,26 @@ export function parseRuntimeAccounts(value: unknown): { accounts: RuntimeAccount
   }
   const ids = new Set<string>()
   const accounts: RuntimeAccountRow[] = value.accounts.accounts.map((item: unknown) => {
-    if (!record(item) || typeof item.id !== 'string' || !/^qq:\d+$/.test(item.id) || ids.has(item.id)) {
+    if (!record(item) || typeof item.id !== 'string' || ids.has(item.id)) {
       throw new Error('账号状态包含无效或重复账号')
     }
+    const platform = parseAccountPlatform(item)
+    if (!platform) throw new Error('账号状态包含无效或重复账号')
     ids.add(item.id)
-    const avatar = typeof item.avatar === 'string' && /^https?:\/\//.test(item.avatar) ? item.avatar : undefined
+    const avatar = typeof item.avatar === 'string' && isAllowedAvatar(item.avatar) ? item.avatar : undefined
     const instanceId = typeof item.instanceId === 'string' && item.instanceId.trim() ? item.instanceId : undefined
     const unread = typeof item.unread === 'number' && Number.isFinite(item.unread) ? Math.max(0, Math.floor(item.unread)) : undefined
-    const unreadPeers = parseUnreadPeers(item.unreadPeers)
+    const unreadPeers = platform === 'qq' ? parseUnreadPeers(item.unreadPeers) : undefined
     return {
       id: accountId(item.id),
       label: [item.label, item.nickname, item.id].find((label): label is string => typeof label === 'string' && Boolean(label.trim()))!,
       ...(avatar ? { avatar } : {}),
-      ...(instanceId ? { instanceId } : {}),
-      platform: 'qq',
+      ...(instanceId && platform === 'qq' ? { instanceId } : {}),
+      platform,
       status: item.online === true ? 'online' : 'offline',
-      ...(item.botEnabled === true ? { botEnabled: true } : {}),
-      ...(item.botWired === true ? { botWired: true } : {}),
-      ...(unread !== undefined ? { unread } : {}),
+      ...(platform === 'qq' && item.botEnabled === true ? { botEnabled: true } : {}),
+      ...(platform === 'qq' && item.botWired === true ? { botWired: true } : {}),
+      ...(platform === 'qq' && unread !== undefined ? { unread } : {}),
       ...(unreadPeers ? { unreadPeers } : {}),
     }
   })
@@ -66,8 +68,46 @@ export function parseRuntimeAccounts(value: unknown): { accounts: RuntimeAccount
   return { accounts, activeId: typeof selected === 'string' && ids.has(selected) ? accountId(selected) : null }
 }
 
+function isAllowedAvatar(src: string): boolean {
+  if (/^https?:\/\//.test(src)) return true
+  return src.startsWith('/api/runtime/growth/accounts/') && src.includes('/avatar')
+}
+
+function parseAccountPlatform(item: Record<string, unknown>): AccountPlatform | null {
+  if (item.platform === 'douyin' || item.client === 'douyin') return 'douyin'
+  if (item.platform === 'qq' || item.client === 'qq') return 'qq'
+  return typeof item.id === 'string' ? accountPlatformFromId(item.id) : null
+}
+
 function messageFrom(value: unknown, fallback: string): string {
   return record(value) && typeof value.message === 'string' && value.message.trim() ? value.message : fallback
+}
+
+export interface GrowthTaskState {
+  running: boolean
+  accountId: string
+  status: string
+  logs: Array<{ level?: string; text?: string; at?: string }>
+  commented: number
+  scanned: number
+  id: string
+  startedAt: string
+}
+
+export function parseGrowthTask(value: unknown): GrowthTaskState {
+  if (!record(value)) {
+    return { running: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '' }
+  }
+  return {
+    running: value.running === true,
+    accountId: typeof value.accountId === 'string' ? value.accountId : '',
+    status: typeof value.status === 'string' && value.status ? value.status : 'idle',
+    logs: Array.isArray(value.logs) ? value.logs.filter(record) : [],
+    commented: Math.max(0, Math.floor(Number(value.commented) || 0)),
+    scanned: Math.max(0, Math.floor(Number(value.scanned) || 0)),
+    id: typeof value.id === 'string' ? value.id : '',
+    startedAt: typeof value.startedAt === 'string' ? value.startedAt : '',
+  }
 }
 
 export interface RuntimeClient {
@@ -107,6 +147,11 @@ export const useShellStore = defineStore('shell', () => {
   const qrReady = ref(false)
   const qrVersion = ref(0)
   const clients = ref<RuntimeClient[]>([{ id: 'qq', name: 'QQ', badge: 'QQ', enabled: true }])
+  const loginClient = ref('qq')
+  const browserPath = ref('')
+  const browserDetected = ref(false)
+  const growthTask = ref<GrowthTaskState>(parseGrowthTask(null))
+  const growthPipOpen = ref(false)
   const activeAccount = computed(() => accounts.value.find(account => account.id === activeAccountId.value) ?? null)
   let requestVersion = 0
   let selectionVersion = 0
@@ -176,8 +221,23 @@ export const useShellStore = defineStore('shell', () => {
     if (!unchanged) accounts.value = next
   }
 
+  function applyGrowthState(value: unknown) {
+    if (!record(value) || !record(value.growth)) return
+    const growth = value.growth
+    loginClient.value = growth.loginClient === 'douyin' ? 'douyin' : 'qq'
+    if (typeof growth.browserPath === 'string') browserPath.value = growth.browserPath
+    browserDetected.value = growth.browserDetected === true
+    const wasRunning = growthTask.value.running
+    growthTask.value = parseGrowthTask(growth.task)
+    if (growthTask.value.running && !wasRunning) growthPipOpen.value = true
+    if (!growthTask.value.running && !growthTask.value.accountId) {
+      /* keep pip if the operator opened it by hand */
+    }
+  }
+
   function applyRuntimeState(value: unknown, preserveSelection = true, options: { preserveLoginState?: boolean } = {}) {
     const state = parseRuntimeAccounts(value)
+    const pendingBefore = pendingAdd.value
     if (record(value) && !options.preserveLoginState) {
       runtimePhase.value = typeof value.phase === 'string' ? value.phase : 'idle'
       runtimeMessage.value = typeof value.message === 'string' ? value.message : ''
@@ -190,9 +250,11 @@ export const useShellStore = defineStore('shell', () => {
         qrVersion.value = 0
       }
     }
+    applyGrowthState(value)
     mergeAccounts(state.accounts)
     const selectedStillExists = state.accounts.some(account => account.id === activeAccountId.value)
-    if (!preserveSelection || !selectedStillExists) {
+    const adoptNewLogin = pendingBefore && !pendingAdd.value && Boolean(state.activeId)
+    if (!preserveSelection || !selectedStillExists || adoptNewLogin) {
       dropLiveUnread(activeAccountId.value)
       activeAccountId.value = state.activeId ?? state.accounts[0]?.id ?? null
     }
@@ -258,10 +320,12 @@ export const useShellStore = defineStore('shell', () => {
   async function addAccount(client = 'qq') {
     if (adding.value || accountAction.value) return
     const version = ++loginVersion
+    const douyin = client === 'douyin'
     adding.value = true
     pendingAdd.value = true
-    runtimePhase.value = 'starting'
-    runtimeMessage.value = '正在启动 QQ 登录'
+    loginClient.value = douyin ? 'douyin' : 'qq'
+    runtimePhase.value = douyin ? 'browser_setup' : 'starting'
+    runtimeMessage.value = douyin ? '选择本机 Chrome，然后登录抖音账号' : '正在启动 QQ 登录'
     qrReady.value = false
     qrVersion.value = 0
     error.value = ''
@@ -273,14 +337,15 @@ export const useShellStore = defineStore('shell', () => {
       const body: unknown = await response.json().catch(() => ({}))
       if (version !== loginVersion) return
       if (!response.ok) throw new Error(record(body) && typeof body.message === 'string' ? body.message : `无法添加账号（HTTP ${response.status}）`)
-      const state = applyRuntimeState(body, false)
-      activeAccountId.value = state.activeId ?? state.accounts.at(-1)?.id ?? null
+      const state = applyRuntimeState(body, !douyin)
+      if (!douyin) activeAccountId.value = state.activeId ?? state.accounts.at(-1)?.id ?? null
     } catch (cause) {
       if (version === loginVersion) {
         error.value = cause instanceof Error ? cause.message : '无法添加账号'
         pendingAdd.value = false
         runtimePhase.value = 'idle'
         runtimeMessage.value = ''
+        loginClient.value = 'qq'
       }
     } finally {
       if (version === loginVersion) adding.value = false
@@ -293,10 +358,18 @@ export const useShellStore = defineStore('shell', () => {
     accountAction.value = true
     error.value = ''
     selectAccount(id)
+    const douyin = isDouyinAccountId(id)
+    if (douyin) {
+      loginClient.value = 'douyin'
+      runtimePhase.value = 'browser_setup'
+      runtimeMessage.value = '选择本机 Chrome，然后登录抖音账号'
+    }
     try {
       const response = await fetch('/api/runtime/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client: 'qq', uin: String(id).replace(/^qq:/, ''), ...(refreshQr ? { refreshQr: true } : {}) }),
+        body: JSON.stringify(douyin
+          ? { client: 'douyin', id }
+          : { client: 'qq', uin: String(id).replace(/^qq:/, ''), ...(refreshQr ? { refreshQr: true } : {}) }),
       })
       const body: unknown = await response.json().catch(() => ({}))
       if (version !== loginVersion) return
@@ -307,6 +380,56 @@ export const useShellStore = defineStore('shell', () => {
     } finally {
       if (version === loginVersion) accountAction.value = false
     }
+  }
+
+  async function saveBrowserPath(nextPath: string) {
+    const response = await fetch('/api/runtime/growth/browser', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: nextPath }),
+    })
+    const body: unknown = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(messageFrom(body, `无法保存浏览器路径（HTTP ${response.status}）`))
+    applyRuntimeState(body)
+    return body
+  }
+
+  async function loginGrowthAccount(nextPath = browserPath.value, id: AccountId | '' = '') {
+    if (accountAction.value || runtimePhase.value === 'logging_in') return
+    const version = ++loginVersion
+    accountAction.value = true
+    loginClient.value = 'douyin'
+    runtimePhase.value = 'logging_in'
+    runtimeMessage.value = '请在弹出的 Chrome 中登录抖音'
+    error.value = ''
+    try {
+      const response = await fetch('/api/runtime/growth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: id || (pendingAdd.value ? '' : activeAccountId.value || ''),
+          browserPath: nextPath || browserPath.value,
+        }),
+      })
+      const body: unknown = await response.json().catch(() => ({}))
+      if (version !== loginVersion) return
+      if (!response.ok) throw new Error(messageFrom(body, `无法登录抖音（HTTP ${response.status}）`))
+      applyRuntimeState(body)
+    } catch (cause) {
+      if (version === loginVersion) {
+        error.value = cause instanceof Error ? cause.message : '无法登录抖音'
+        if (runtimePhase.value === 'logging_in') {
+          runtimePhase.value = 'browser_setup'
+          runtimeMessage.value = error.value
+        }
+      }
+    } finally {
+      if (version === loginVersion) accountAction.value = false
+    }
+  }
+
+  function setGrowthPipOpen(open: boolean) {
+    growthPipOpen.value = open
   }
 
   async function refreshLoginQr() {
@@ -385,6 +508,8 @@ export const useShellStore = defineStore('shell', () => {
   return {
     activeAccountId, activeAccount, accounts, loading, adding, accountAction, cancelingLogin, removingAccountId, error,
     runtimePhase, runtimeMessage, pendingAdd, qrReady, qrVersion, clients,
+    loginClient, browserPath, browserDetected, growthTask, growthPipOpen,
     selectAccount, setAccountUnread, applyRuntimeState, refreshAccounts, refreshClients, addAccount, reloginAccount, refreshLoginQr, removeAccount, cancelLogin, cancelRefresh,
+    saveBrowserPath, loginGrowthAccount, setGrowthPipOpen,
   }
 })

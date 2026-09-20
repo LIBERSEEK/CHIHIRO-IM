@@ -50,6 +50,7 @@
     "qrcode": "^1.5.4",
     "semver": "^7.7.1",
     "shiki": "^3.23.0",
+    "simple-icons": "^16.32.0",
     "spacingjs": "^1.0.8",
     "stream-markdown": "^0.0.16",
     "uuid": "^11.0.3",

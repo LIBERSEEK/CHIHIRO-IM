@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 
 const shell = readFileSync(new URL('./AppShell.vue', import.meta.url), 'utf8')
 const pop = readFileSync(new URL('./AccountProfilePop.vue', import.meta.url), 'utf8')
+const badge = readFileSync(new URL('./AccountPlatformBadge.vue', import.meta.url), 'utf8')
+const accountUi = readFileSync(new URL('./account-ui.ts', import.meta.url), 'utf8')
 const imPop = readFileSync(new URL('../modules/im/native/src/components/user/UserProfilePop.vue', import.meta.url), 'utf8')
 
 describe('account rail profile pop', () => {
@@ -28,6 +30,16 @@ describe('account rail profile pop', () => {
     expect(imPop).toContain('<Copy v-else :size="14" />')
     expect(imPop).not.toContain("['fas', copied ? 'check' : 'copy']")
     expect(imPop).toContain('copyToClipboard(String(props.userId))')
+  })
+
+  it('draws avatar platform badges from simple-icons library files', () => {
+    expect(accountUi).toContain("from 'simple-icons/icons/qq.svg?raw'")
+    expect(accountUi).toContain("from 'simple-icons/icons/tiktok.svg?raw'")
+    expect(accountUi).not.toContain('@/assets/brands/')
+    expect(badge).toContain('accountPlatformBrand')
+    expect(badge).toContain('<path :d="brand.path" fill="currentColor" />')
+    expect(badge).not.toContain('@/assets/brands/')
+    expect(badge).not.toContain('<img')
   })
 
   it('opens QQ Zone in the shell iframe window instead of a new browser tab', () => {

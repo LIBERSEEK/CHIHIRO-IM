@@ -30,6 +30,7 @@ import UserAddContactPan from '../im/native/src/components/user/UserAddContactPa
 import UserFileManager, { panelVisible } from '../im/native/src/components/user/UserFileManager.vue'
 import { setNativeViewerHost } from '../im/native/viewer'
 import AgentEntry from '../agent/AgentEntry.vue'
+import GrowthWorkbench from '../growth/GrowthWorkbench.vue'
 import { routeForImConversation, routeForWorkspaceList, useWorkspace, type ListTab, type WorkspaceRoute } from './workspace'
 import { queryText, syncWorkspaceFromRoute, workspaceRouteMatches } from './routeSync'
 import { canRestoreNativeConversation, contactToChatInfo, findNativeConversationForRoute } from './nativeConversation'
@@ -59,6 +60,7 @@ let generation = 0
 let detach: (() => void) | undefined
 let detachViewer: (() => void) | undefined
 const hasChat = computed(() => chat.chatInfo.show.id !== 0)
+const isGrowthAccount = computed(() => shell.activeAccount?.platform === 'douyin')
 const showSettings = computed(() => route.query.settings === '1')
 const connectingNativeAccountId = ref<string | null>(null)
 const readyNativeAccountId = ref<string | null>(null)
@@ -108,7 +110,7 @@ async function connect() {
   resetNativeAccountState()
   error.value = ''
   selectNativeAccountOptions(account?.id)
-  if (!account || account.status !== 'online') {
+  if (!account || account.status !== 'online' || account.platform === 'douyin') {
     connectingNativeAccountId.value = null
     return
   }
@@ -265,7 +267,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="chihiro-native-im" aria-label="消息与联系人">
+  <section v-if="isGrowthAccount" class="chihiro-native-im growth-workspace" aria-label="抖音工作台">
+    <GrowthWorkbench />
+  </section>
+  <section v-else class="chihiro-native-im" aria-label="消息与联系人">
     <Teleport to="body"><div id="chihiro-im-overlays" /></Teleport>
     <div v-if="showSettings" class="native-options">
       <UserOptions show class="active" :config="settings.sysConfig">
@@ -344,6 +349,7 @@ onBeforeUnmount(() => {
 
 <style>
 .chihiro-native-im { width:100%; height:100%; min-height:0; color:var(--color-font); --safe-area-top:0px; --safe-area-bottom:0px; --chihiro-list-width:280px; --color-font-3:var(--color-font-2); --color-bg-yellow:color-mix(in srgb, #ffd60a 20%, var(--color-bg)); --color-bg-red:color-mix(in srgb, #ff453a 18%, var(--color-bg)); }
+.chihiro-native-im.growth-workspace { display:flex; background:#101014; }
 #chihiro-im-overlays { position:fixed; z-index:1100; inset:0; width:0; height:0; overflow:visible; pointer-events:none; }
 #chihiro-im-overlays>* { pointer-events:auto; }
 .chihiro-native-im #base-app { display:grid; grid-template-columns:280px minmax(0,1fr); overflow:hidden; }

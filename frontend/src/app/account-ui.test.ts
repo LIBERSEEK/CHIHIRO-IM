@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { siQq, siTiktok } from 'simple-icons'
 import { accountId, type AccountContext } from '@/contracts'
 import {
   accountAvatarClickAction,
   accountAvatarSrc,
+  accountPlatformBadge,
+  accountPlatformBrand,
   accountQzoneUrl,
   accountTitle,
   accountUin,
@@ -75,6 +78,38 @@ describe('account rail UI contract', () => {
     expect(canOpenNapCatSettings(account({ platform: 'qq' }))).toBe(true)
     expect(canOpenNapCatSettings(account({ platform: 'telegram' as never }))).toBe(false)
     expect(canOpenNapCatSettings(account({ platform: 'wechat' as never }))).toBe(false)
+    expect(canOpenNapCatSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(false)
+  })
+
+  it('labels Douyin accounts without QQ number, Qzone or Bot badge', () => {
+    const value = account({ id: accountId('douyin:abc'), label: '创作者', platform: 'douyin', botEnabled: true, unread: 3 })
+    expect(accountTitle(value)).toBe('创作者 · 抖音 · 在线 · 右键管理')
+    expect(accountUin(value)).toBe('')
+    expect(accountQzoneUrl(value)).toBe('')
+    expect(accountAvatarSrc(value)).toBe('')
+    expect(shouldShowBotBadge(value)).toBe(false)
+    expect(accountPlatformBadge(value.platform)).toBe('douyin')
+    expect(accountPlatformBadge('qq')).toBe('qq')
+    expect(accountPlatformBrand('qq')).toEqual({
+      platform: 'qq',
+      slug: siQq.slug,
+      title: siQq.title,
+      hex: siQq.hex,
+      path: siQq.path,
+    })
+    expect(accountPlatformBrand('douyin')).toEqual({
+      platform: 'douyin',
+      slug: siTiktok.slug,
+      title: '抖音',
+      hex: siTiktok.hex,
+      path: siTiktok.path,
+    })
+    expect(accountPlatformBrand('telegram' as never)).toBeNull()
+    expect(accountAvatarSrc(account({
+      id: accountId('douyin:abc'),
+      platform: 'douyin',
+      avatar: '/api/runtime/growth/accounts/douyin%3Aabc/avatar?v=1',
+    }))).toBe('/api/runtime/growth/accounts/douyin%3Aabc/avatar?v=1')
   })
 
   it('clamps context menu position inside the shell viewport', () => {

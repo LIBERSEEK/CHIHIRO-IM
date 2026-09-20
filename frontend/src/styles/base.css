@@ -37,6 +37,8 @@ button { color:inherit; }
 .account-avatar.offline .account-avatar-face { opacity:.62; filter:saturate(.45); }
 .account-unread-badge { position:absolute; right:-4px; top:-4px; z-index:3; min-width:16px; height:16px; padding:0 4px; border-radius:8px; color:#fff; background:#ff3b30; font-size:10px; font-weight:750; line-height:16px; text-align:center; white-space:nowrap; pointer-events:none; }
 .account-bot-badge { position:absolute; left:-2px; bottom:-2px; z-index:2; padding:0 3px; border-radius:6px; color:#fff; background:var(--shell-accent); font-size:8px; font-weight:750; line-height:1.35; pointer-events:none; }
+.account-platform-badge { position:absolute; right:-3px; bottom:-3px; z-index:2; display:grid; width:16px; height:16px; place-items:center; border:1.5px solid var(--shell-rail); border-radius:50%; color:#fff; pointer-events:none; overflow:hidden; }
+.account-platform-badge svg { display:block; width:10px; height:10px; }
 .rail-button { background:transparent; color:var(--shell-muted); }
 .rail-button:hover,.rail-button.active { color:var(--shell-text); background:var(--shell-line); }
 .rail-button svg { width:18px; height:18px; }
@@ -70,6 +72,7 @@ button { color:inherit; }
 .app-loading button { padding:7px 13px; border:1px solid var(--shell-line); border-radius:8px; color:var(--shell-text); background:var(--shell-rail); cursor:pointer; }
 .app-loading-spinner { width:28px; height:28px; border:2px solid var(--shell-line); border-top-color:var(--shell-accent); border-radius:50%; animation:rail-spin .8s linear infinite; }
 .login-panel { position:fixed; z-index:900; inset:0 0 0 56px; display:grid; place-items:center; padding:24px; color:var(--shell-text); background:var(--shell-bg); }
+.login-panel.login-panel-fill { padding:0; display:block; color:#111; background:#ececec; }
 .login-card { display:flex; width:min(420px,100%); flex-direction:column; align-items:center; gap:14px; text-align:center; }
 .login-card h1 { margin:0; font-size:28px; }
 .login-brand,.login-message { margin:0; color:var(--shell-muted); line-height:1.5; }
@@ -121,4 +124,5 @@ button { color:inherit; }
   .add-account-popover { left:42px; width:min(300px,calc(100vw - 58px)); }
   .settings-menu { left:42px; }
   .login-panel { left:50px; padding:18px; }
+  .login-panel.login-panel-fill { padding:0; }
 }

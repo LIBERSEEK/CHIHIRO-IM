@@ -41,7 +41,7 @@
 | MCP      | ✅   | —        | —   |
 
 
-QQ：扫码 / 快速登录（NapCat + NTQQ），Mac 上由 Runtime 拉起隔离的 QQ，不要手跑 `--no-sandbox`。同 peerId 的历史、草稿、未读按账号隔离。ChatBot 见 [docs/next-stage-execution-plan.md](docs/next-stage-execution-plan.md)。
+QQ：扫码 / 快速登录（NapCat + NTQQ），Mac 上由 Runtime 拉起隔离的 QQ，不要手跑 `--no-sandbox`。同 peerId 的历史、草稿、未读按账号隔离。ChatBot 开发中。
 
 Telegram / 微信等下拉可占位，不表示该平台已有个人号登录和历史。营销获客、群发、画像评分、跨群报告未作为产品交付。
 

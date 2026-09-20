@@ -3,6 +3,8 @@ import path from 'node:path'
 import { CLIENTS, getClient } from './clients.mjs'
 import { createAccountStore } from './accounts.mjs'
 import { createQqRuntime } from './qq-napcat.mjs'
+import { createGrowthRuntime } from './growth.mjs'
+import { isDouyinAccountId } from './growth-ids.mjs'
 import { createAstrbotRuntime } from './astrbot.mjs'
 import { createBotController } from './bot.mjs'
 import { createBotSuggest } from './bot-suggest.mjs'
@@ -22,6 +24,13 @@ export function createRuntime({ root, cfg, services = {} }) {
     store,
     logDir: path.join(dataDir, 'logs'),
     root
+  })
+  const growth = services.growth || createGrowthRuntime({
+    root,
+    store,
+    emit: () => qq.touch?.(),
+    loginWaiter: services.growthLoginWaiter,
+    feedRunner: services.growthFeedRunner,
   })
   const astrbot = services.astrbot || createAstrbotRuntime({ root, cfg })
   const agent = createAgentController({ root, store, qq, astrbot, cfg })
@@ -48,7 +57,7 @@ export function createRuntime({ root, cfg, services = {} }) {
   const chatui = services.chatui || createChatuiProxy({ astrbot })
 
   async function snapshot() {
-    const snap = qq.snapshot()
+    const snap = growth.decorateSnapshot(qq.snapshot())
     snap.astrbot = await astrbot.refreshStatus()
     const wired = bot.wired
     for (const acc of snap.accounts?.accounts || []) {
@@ -96,6 +105,11 @@ export function createRuntime({ root, cfg, services = {} }) {
     if (p === '/api/runtime/accounts/remove' && method === 'POST') {
       const body = await readJson(req)
       if (!body.id) return json(res, { error: 'missing_id' }, 400)
+      if (isDouyinAccountId(body.id)) {
+        await growth.cleanup(body.id).catch((e) => logError('api', 'growth.cleanup', e))
+        store.remove(body.id)
+        return json(res, await snapshot())
+      }
       await bot.unwireBeforeRemove(body.id).catch((e) => logError('api', 'unwire', e))
       const snap = await qq.removeAccount(body.id)
       snap.astrbot = await astrbot.refreshStatus()
@@ -338,6 +352,11 @@ export function createRuntime({ root, cfg, services = {} }) {
 
     if (p === '/api/runtime/login/cancel' && method === 'POST') {
       try {
+        const current = growth.snapshotGrowth()
+        if (current.loginClient === 'douyin' && (current.pendingAdd || current.phase === 'logging_in' || current.phase === 'browser_setup')) {
+          await growth.cancelLogin()
+          return json(res, await snapshot())
+        }
         const snap = await qq.cancelLogin()
         snap.astrbot = await astrbot.refreshStatus()
         return json(res, snap)
@@ -360,6 +379,13 @@ export function createRuntime({ root, cfg, services = {} }) {
         }, 501)
       }
       log('api', `start client=${clientId} mode=${body.mode || '-'} uin=${body.uin || '-'}`)
+      if (clientId === 'douyin') {
+        const accountId = isDouyinAccountId(body.id)
+          ? body.id
+          : (body.uin ? `douyin:${body.uin}` : '')
+        growth.prepareNew(accountId)
+        return json(res, await snapshot())
+      }
       const snap = await qq.start({
         uin: body.uin,
         forceNew: body.mode === 'new' || body.forceNew === true,
@@ -367,6 +393,112 @@ export function createRuntime({ root, cfg, services = {} }) {
       })
       snap.astrbot = await astrbot.refreshStatus()
       return json(res, snap)
+    }
+
+    if (p === '/api/runtime/growth/browser' && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        const detected = growth.setBrowserPath(body.path || '')
+        return json(res, { ...detected, ...(await snapshot()) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/login' && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        const browserPath = body.browserPath || body.path || ''
+        if (browserPath) growth.setBrowserPath(browserPath)
+        const browser = growth.browserState()
+        if (!browser.detected) {
+          return json(res, { error: 'chrome_not_found', message: `找不到 Chrome：${browser.path || '未设置路径'}`, ...(await snapshot()) }, 400)
+        }
+        growth.login({
+          accountId: body.id || body.accountId || '',
+          browserPath,
+        }).catch((e) => logError('api', 'growth.login', e))
+        return json(res, await snapshot())
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    const growthAvatarMatch = p.match(/^\/api\/runtime\/growth\/accounts\/([^/]+)\/avatar$/)
+    if (growthAvatarMatch && method === 'GET') {
+      const id = decodePathPart(growthAvatarMatch[1])
+      const file = growth.readAvatar(id)
+      if (!file) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'avatar_not_found' }))
+        return true
+      }
+      res.writeHead(200, {
+        'Content-Type': file.contentType || 'image/jpeg',
+        'Cache-Control': 'private, max-age=120',
+      })
+      res.end(file.body)
+      return true
+    }
+
+    const growthImagesMatch = p.match(/^\/api\/runtime\/growth\/accounts\/([^/]+)\/comment-images$/)
+    if (growthImagesMatch && method === 'POST') {
+      const id = decodePathPart(growthImagesMatch[1])
+      try {
+        const body = await readJson(req)
+        const saved = growth.saveCommentImages(id, body.groupId || body.id, body.type, body.files)
+        return json(res, { ...saved, ...(await snapshot()) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    const growthHistoryMatch = p.match(/^\/api\/runtime\/growth\/accounts\/([^/]+)\/history(?:\/([^/]+))?$/)
+    if (growthHistoryMatch && method === 'DELETE') {
+      const id = decodePathPart(growthHistoryMatch[1])
+      const taskId = growthHistoryMatch[2] ? decodePathPart(growthHistoryMatch[2]) : ''
+      try {
+        const account = taskId
+          ? growth.deleteTaskHistory(id, taskId)
+          : growth.clearTaskHistory(id)
+        return json(res, { account, ...(await snapshot()) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    if (p.startsWith('/api/runtime/growth/accounts/') && method === 'GET') {
+      const rest = p.slice('/api/runtime/growth/accounts/'.length)
+      if (rest.includes('/')) return json(res, { error: 'account_not_found' }, 404)
+      const id = decodePathPart(rest)
+      const view = growth.accountView(id)
+      if (!view) return json(res, { error: 'account_not_found' }, 404)
+      return json(res, view)
+    }
+
+    if (p.match(/^\/api\/runtime\/growth\/accounts\/[^/]+\/settings$/) && method === 'POST') {
+      const id = decodePathPart(p.split('/')[5])
+      try {
+        const settings = growth.writeSettings(id, await readJson(req))
+        return json(res, { settings, ...(await snapshot()) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/task/start' && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        await growth.startTask(body.accountId || body.id, body.settings || {})
+        return json(res, await snapshot())
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/task/stop' && method === 'POST') {
+      await growth.stopTask()
+      return json(res, await snapshot())
     }
 
     if (p === '/api/runtime/qq/qr' && method === 'GET') {
@@ -406,7 +538,8 @@ export function createRuntime({ root, cfg, services = {} }) {
         } catch { /* closed */ }
       }
       send()
-      const unsub = qq.subscribe(() => { send() })
+      const unsubQq = qq.subscribe(() => { send() })
+      const unsubGrowth = growth.subscribe(() => { send() })
       const timer = setInterval(() => {
         qq.refreshPorts()
           .then(() => {
@@ -416,7 +549,8 @@ export function createRuntime({ root, cfg, services = {} }) {
           .catch(() => {})
       }, 1500)
       req.on('close', () => {
-        unsub()
+        unsubQq()
+        unsubGrowth()
         clearInterval(timer)
       })
       return true
@@ -430,7 +564,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     await astrbot.stopIfOwned().catch((e) => logError('api', 'astrbot stop', e))
   }
 
-  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, snapshot, shutdown }
+  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, growth, snapshot, shutdown }
 }
 
 function json(res, obj, status = 200) {

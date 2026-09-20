@@ -1,10 +1,6 @@
 # 千寻开发
 
-产品口径只在 [product.md](product.md)。本文是工程：目录、职责、契约、发送出口和阶段。当前冲刺是 Bot 与 Agent，见 [next-stage-execution-plan.md](next-stage-execution-plan.md)。
-
-前端抽取细节见 [frontend-unification-plan.md](frontend-unification-plan.md)。目录与 Compose 边界见 [docker-project-layout.md](docker-project-layout.md)。日常改文件规则见 [iteration.md](iteration.md)。当前冲刺见 [next-stage-execution-plan.md](next-stage-execution-plan.md)。
-
-2026-09 的原文和执行台账在 [archive/](archive/)。
+产品口径只在 [product.md](product.md)。本文是工程：目录、职责、契约、发送出口和阶段。当前冲刺是 Bot 与 Agent。日常改文件规则见 [iteration.md](iteration.md)。
 
 ## 1. 目标与约束
 
@@ -134,6 +130,11 @@ MCP 只做 Agent 工具访问，不当事件总线、持久化任务或审批通
 6. 只有部分 send action 进拦截，不算统一授权；其它修改动作默认透传是漏洞。
 7. 用单个 Bot 开关决定是否停 AstrBot，覆盖不了 ChatUI、托管、计划任务并存；改运行需求登记或租约。
 8. 工具能力以服务端策略为准，不靠改 MCP 提示词获得实际能力。主动加好友等未验证接口只提供待办。
+9. 产品 IM 仍经 NapCat 插件构建（`rebuild:im`）；统一前端不等于已经去掉插件产物路径。`/legacy` 在 IM/Agent 能力对等验证前保留。
+10. 高级维护入口（AstrBot Dashboard、NapCat WebUI）可以 iframe；核心消息 / Agent / 托管不得再引入第二个 `createApp`、ChatUI IIFE 或账号 iframe。
+11. 旧 `chihiro:<instanceId>:` 与 IndexedDB 归属按账号验证；不明归属不猜测合并。
+12. Docker：Linux 内置 NapCat 未实测不得宣称支持；Mac QQ 走外部实例。Compose 管容器生命周期，Runtime 不得对其他容器 spawn。不把 Docker socket 挂进业务容器。
+13. 部署出本机后必须有入口认证；内部端口默认不公开。NapCat 离线是通道不可用，不能让产品打不开。
 
 保留：QQ 账号/进程管理、Gateway 单入口、Stapxs User* IM、原生 ChatUI、NapCat 历史桥、现有草稿面板交互基础。
 
@@ -150,7 +151,7 @@ MCP 只做 Agent 工具访问，不当事件总线、持久化任务或审批通
 | 营销活动 | 受众快照、个性化草稿、确认、分批、暂停恢复、回复转接待 | 拒绝名单/配额/去重有效；部分失败可恢复；回复后停该人后续营销 |
 | 团队与多平台 | RBAC、任务分配、共享知识/客户、需要时 PostgreSQL、新通道 | 每平台单独验收登录、收信、历史、发信、身份与权限 |
 
-统一前端已挂在 `/`。后续阶段细节见 [frontend-unification-plan.md](frontend-unification-plan.md)。旧工作台验收清单只留在 [archive/0.1.0-acceptance.md](archive/0.1.0-acceptance.md)，不再当冲刺目标。
+统一前端已挂在 `/`。旧工作台验收清单不再作为冲刺目标。
 
 ## 9. 测试、评估、运行
 

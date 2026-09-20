@@ -4,7 +4,10 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { SlidersHorizontal, Settings } from '@lucide/vue'
 
 import AccountProfilePop from '@/app/AccountProfilePop.vue'
+import AccountPlatformBadge from '@/app/AccountPlatformBadge.vue'
 import ExternalSettingsDialog from '@/app/ExternalSettingsDialog.vue'
+import GrowthPip from '@/modules/growth/GrowthPip.vue'
+import GrowthLoginPanel from '@/modules/growth/GrowthLoginPanel.vue'
 import { useAssistantStore } from '@/modules/assistant/session'
 import { useSuggestStore } from '@/modules/assistant/suggest'
 import { useShellStore } from '@/stores/shell'
@@ -14,6 +17,7 @@ import { resolveShellViewState } from '@/app/shell-view-state'
 import { startRuntimeStateStream, type RuntimeStateStream } from '@/app/runtime-state-stream'
 import {
   accountAvatarClickAction,
+  accountAvatarSrc,
   accountTitle,
   accountUnreadLabel,
   canCloseExitDialog,
@@ -53,6 +57,7 @@ const shellView = computed(() => resolveShellViewState({
   qrReady: shell.qrReady,
   cancelingLogin: shell.cancelingLogin,
   activeAccount: shell.activeAccount,
+  loginClient: shell.loginClient,
 }))
 const showRuntimeBootLoading = computed(() => shellView.value.showRuntimeBootLoading)
 const loginInProgress = computed(() => shellView.value.loginInProgress)
@@ -71,7 +76,12 @@ const selectedClient = computed(() => shell.clients.find(client => client.id ===
   ?? shell.clients.find(client => client.enabled)
   ?? shell.clients[0])
 const qrSrc = computed(() => `/api/runtime/qq/qr?v=${shell.qrVersion || Date.now()}`)
-
+const loginKind = computed(() => {
+  if (shell.loginClient === 'douyin' || shell.activeAccount?.platform === 'douyin' || shell.runtimePhase === 'browser_setup') {
+    return 'douyin' as const
+  }
+  return 'qq' as const
+})
 function applyTheme(mode: ThemeMode) {
   themeMode.value = applyShellTheme(mode).mode
 }
@@ -119,6 +129,13 @@ function closeAddLauncher() {
 function relogin(account: AccountContext, refreshQr = false) {
   closeAccountMenu()
   void shell.reloginAccount(account.id, refreshQr)
+}
+async function loginDouyin(path = '') {
+  try {
+    await shell.loginGrowthAccount(path || shell.browserPath)
+  } catch (cause) {
+    shell.error = cause instanceof Error ? cause.message : '无法登录抖音'
+  }
 }
 function askExit(account: AccountContext) {
   closeAccountMenu()
@@ -250,11 +267,12 @@ onUnmounted(() => {
           :title="accountTitle(account, { active: account.id === shell.activeAccountId })"
           @click.stop="onAccountAvatarClick($event, account)" @contextmenu.prevent.stop="openAccountMenu($event, account)">
           <span class="account-avatar-face">
-            <img v-if="account.avatar" :src="account.avatar" alt="" referrerpolicy="no-referrer" />
+            <img v-if="accountAvatarSrc(account)" :src="accountAvatarSrc(account)" alt="" referrerpolicy="no-referrer" />
             <span v-else>{{ account.label.slice(0, 1) }}</span>
           </span>
           <span v-if="shouldShowAccountUnread(account)" class="account-unread-badge">{{ accountUnreadLabel(account) }}</span>
           <span v-if="shouldShowBotBadge(account)" class="account-bot-badge">BOT</span>
+          <AccountPlatformBadge :platform="account.platform" />
         </button>
       </div>
       <div class="rail-add-slot">
@@ -309,7 +327,7 @@ onUnmounted(() => {
       </div>
       <RouterView v-else />
     </main>
-    <section v-if="showLoginPanel" class="login-panel" aria-label="QQ 登录">
+    <section v-if="showLoginPanel" class="login-panel" :class="{ 'login-panel-fill': loginKind === 'douyin' && !showEmptyLauncher }" :aria-label="loginKind === 'douyin' ? '抖音登录' : 'QQ 登录'">
       <div v-if="showEmptyLauncher" class="login-card empty-launcher">
         <div class="empty-title">
           <img class="empty-logo" src="/icon.png" alt="" />
@@ -335,6 +353,16 @@ onUnmounted(() => {
           <button type="button" class="launch-button" :disabled="shell.adding || !selectedClient?.enabled" @click="startSelectedClient">启动</button>
         </div>
       </div>
+      <GrowthLoginPanel
+        v-else-if="loginKind === 'douyin'"
+        :busy="shell.runtimePhase === 'logging_in'"
+        :canceling="shell.cancelingLogin"
+        :message="loginMessage"
+        :can-exit="Boolean(shell.activeAccount)"
+        @login="loginDouyin"
+        @cancel="shell.cancelLogin"
+        @exit="shell.activeAccount && askExit(shell.activeAccount)"
+      />
       <div v-else class="login-card">
         <h1>{{ shell.pendingAdd ? '登录新账号' : shell.activeAccount?.status === 'online' ? 'QQ 登录' : '账号未连接' }}</h1>
         <p class="login-brand">千寻IM - 千人千面, 千域千寻</p>
@@ -373,6 +401,7 @@ onUnmounted(() => {
       :src="externalSettings?.src ?? ''"
       @close="externalSettings = null"
     />
+    <GrowthPip />
     <p v-if="shell.error" class="shell-error" role="alert">{{ shell.error }} <button type="button" @click="shell.refreshAccounts">重试</button></p>
   </div>
 </template>
