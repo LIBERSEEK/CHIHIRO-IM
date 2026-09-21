@@ -325,6 +325,33 @@ export async function stopGrowthTask(): Promise<unknown> {
   return readJson(response, `无法停止任务（HTTP ${response.status}）`)
 }
 
+export async function pauseGrowthTask(paused: boolean): Promise<unknown> {
+  const response = await fetch('/api/runtime/growth/task/pause', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paused }),
+  })
+  return readJson(response, `无法${paused ? '暂停' : '继续'}任务（HTTP ${response.status}）`)
+}
+
+export async function setGrowthPreviewMode(mode: 'pip' | 'window'): Promise<unknown> {
+  const response = await fetch('/api/runtime/growth/preview/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+  return readJson(response, `无法切换预览窗口（HTTP ${response.status}）`)
+}
+
+export async function setGrowthPreviewMuted(muted: boolean): Promise<unknown> {
+  const response = await fetch('/api/runtime/growth/preview/mute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ muted }),
+  })
+  return readJson(response, `无法切换静音（HTTP ${response.status}）`)
+}
+
 export async function deleteGrowthTask(accountId: string, taskId: string): Promise<unknown> {
   const response = await fetch(
     `/api/runtime/growth/accounts/${encodeURIComponent(accountId)}/history/${encodeURIComponent(taskId)}`,

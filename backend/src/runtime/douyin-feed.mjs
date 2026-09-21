@@ -153,16 +153,24 @@ export async function runDouyinFeedTask({
   settings,
   launch,
   shouldStop = () => false,
+  shouldPause = () => false,
   onLog = () => {},
   onVideo = () => {},
   onComment = () => {},
+  onReady = () => {},
 }) {
   if (!executablePath) throw new Error('未设置 Chrome 路径')
+  settings = { ...settings, shouldStop, shouldPause }
   const browserApi = launch || await defaultLaunch()
   const browser = await browserApi.chromium.launch({
     executablePath,
     headless: false,
-    args: ['--disable-blink-features=AutomationControlled'],
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-background-timer-throttling',
+    ],
   })
   let context
   try {
@@ -170,6 +178,7 @@ export async function runDouyinFeedTask({
       storageState: storageStatePath,
     })
     const page = await context.newPage()
+    try { await onReady({ page, browser }) } catch { /* preview is optional */ }
     const videos = new Map()
     page.on('response', async (response) => {
       try {
@@ -458,7 +467,23 @@ function listCommentImages(filePath, type) {
 }
 
 function waitMs(settings, ms) {
-  return delay(settings?.fast ? 1 : ms)
+  const shouldStop = typeof settings?.shouldStop === 'function' ? settings.shouldStop : () => false
+  const shouldPause = typeof settings?.shouldPause === 'function' ? settings.shouldPause : () => false
+  const slice = settings?.fast ? 1 : 200
+  let remain = settings?.fast ? 1 : Math.max(0, Number(ms) || 0)
+  return (async () => {
+    while (true) {
+      if (shouldStop()) throw new Error('Task stopped')
+      if (shouldPause()) {
+        await delay(slice)
+        continue
+      }
+      if (remain <= 0) return
+      const step = Math.min(slice, remain)
+      await delay(step)
+      remain -= step
+    }
+  })()
 }
 
 async function defaultLaunch() {

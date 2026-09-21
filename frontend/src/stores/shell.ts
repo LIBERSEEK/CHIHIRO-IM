@@ -92,11 +92,15 @@ export interface GrowthTaskState {
   scanned: number
   id: string
   startedAt: string
+  previewMode: 'pip' | 'window'
+  previewAvailable: boolean
+  previewMuted: boolean
+  paused: boolean
 }
 
 export function parseGrowthTask(value: unknown): GrowthTaskState {
   if (!record(value)) {
-    return { running: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '' }
+    return { running: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '', previewMode: 'window', previewAvailable: false, previewMuted: true, paused: false }
   }
   return {
     running: value.running === true,
@@ -107,6 +111,10 @@ export function parseGrowthTask(value: unknown): GrowthTaskState {
     scanned: Math.max(0, Math.floor(Number(value.scanned) || 0)),
     id: typeof value.id === 'string' ? value.id : '',
     startedAt: typeof value.startedAt === 'string' ? value.startedAt : '',
+    previewMode: value.previewMode === 'pip' ? 'pip' : 'window',
+    previewAvailable: value.previewAvailable === true,
+    previewMuted: value.previewMuted !== false,
+    paused: value.paused === true || value.status === 'paused',
   }
 }
 
@@ -228,7 +236,13 @@ export const useShellStore = defineStore('shell', () => {
     if (typeof growth.browserPath === 'string') browserPath.value = growth.browserPath
     browserDetected.value = growth.browserDetected === true
     const wasRunning = growthTask.value.running
-    growthTask.value = parseGrowthTask(growth.task)
+    const nextTask = parseGrowthTask(growth.task)
+    if (record(growth.preview)) {
+      nextTask.previewMode = growth.preview.mode === 'pip' ? 'pip' : 'window'
+      nextTask.previewAvailable = growth.preview.available === true
+      nextTask.previewMuted = growth.preview.muted !== false
+    }
+    growthTask.value = nextTask
     if (growthTask.value.running && !wasRunning) growthPipOpen.value = true
     if (!growthTask.value.running && !growthTask.value.accountId) {
       /* keep pip if the operator opened it by hand */

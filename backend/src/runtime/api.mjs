@@ -501,6 +501,73 @@ export function createRuntime({ root, cfg, services = {} }) {
       return json(res, await snapshot())
     }
 
+    if (p === '/api/runtime/growth/task/pause' && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        await growth.setPaused(body.paused === true)
+        return json(res, await snapshot())
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/preview/mode' && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        await growth.setPreviewMode(body.mode)
+        return json(res, await snapshot())
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/preview/mute' && method === 'POST') {
+      const body = await readJson(req)
+      try {
+        await growth.setPreviewMuted(body.muted !== false)
+        return json(res, await snapshot())
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/preview.jpg' && method === 'GET') {
+      const jpeg = growth.previewFrame()
+      if (!jpeg) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'no_preview' }))
+        return true
+      }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' })
+      res.end(Buffer.from(jpeg, 'base64'))
+      return true
+    }
+
+    if (p === '/api/runtime/growth/preview/stream' && method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      })
+      const send = () => {
+        try {
+          const jpeg = growth.previewFrame()
+          const preview = growth.snapshotGrowth().preview || {}
+          res.write(`data: ${JSON.stringify({
+            jpeg,
+            mode: preview.mode || 'window',
+            available: Boolean(jpeg),
+            muted: preview.muted !== false,
+          })}\n\n`)
+        } catch { /* closed */ }
+      }
+      send()
+      const unsub = growth.subscribePreview(send)
+      req.on('close', unsub)
+      return true
+    }
+
     if (p === '/api/runtime/qq/qr' && method === 'GET') {
       const snap = qq.snapshot()
       const qr = snap.qr

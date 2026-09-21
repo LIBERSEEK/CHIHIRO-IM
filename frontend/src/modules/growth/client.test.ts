@@ -7,6 +7,9 @@ import {
   deleteGrowthTask,
   clearGrowthHistory,
   uploadGrowthCommentImages,
+  setGrowthPreviewMode,
+  setGrowthPreviewMuted,
+  pauseGrowthTask,
   groupHasCommentConfig,
   leavesHaveCommentConfig,
 } from './client'
@@ -100,6 +103,18 @@ describe('growth client', () => {
     fetcher.mockResolvedValueOnce({ ok: true, json: async () => ({ path: '/data/img', type: 'file', count: 1 }) })
     await uploadGrowthCommentImages('douyin:abc', 'g1', 'file', [{ name: 'a.png', body: 'aaaa' }])
     expect(fetcher.mock.calls[4][0]).toBe('/api/runtime/growth/accounts/douyin%3Aabc/comment-images')
+    fetcher.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+    await setGrowthPreviewMode('pip')
+    expect(fetcher.mock.calls[5][0]).toBe('/api/runtime/growth/preview/mode')
+    expect(fetcher.mock.calls[5][1]).toMatchObject({ method: 'POST' })
+    fetcher.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+    await pauseGrowthTask(true)
+    expect(fetcher.mock.calls[6][0]).toBe('/api/runtime/growth/task/pause')
+    expect(fetcher.mock.calls[6][1]).toMatchObject({ method: 'POST' })
+    fetcher.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+    await setGrowthPreviewMuted(false)
+    expect(fetcher.mock.calls[7][0]).toBe('/api/runtime/growth/preview/mute')
+    expect(fetcher.mock.calls[7][1]).toMatchObject({ method: 'POST' })
   })
 
   it('treats text or image as configured comment content on leaves only', () => {

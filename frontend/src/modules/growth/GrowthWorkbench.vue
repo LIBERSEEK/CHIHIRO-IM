@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowLeft, ChevronDown, ChevronRight, CircleCheck, CircleHelp, CircleStop, CircleX,
-  Clock, LayoutGrid, LogOut, MessageSquare, Play, Settings, Smile, Trash, X,
+  Clock, LayoutGrid, LogOut, MessageSquare, Pause, Play, Settings, Smile, Trash, X,
 } from '@lucide/vue'
 import { useShellStore } from '@/stores/shell'
 import {
@@ -19,6 +19,7 @@ import {
   newRuleGroup,
   parseGrowthSettings,
   saveGrowthSettings,
+  pauseGrowthTask,
   startGrowthTask,
   stopGrowthTask,
   uploadGrowthCommentImages,
@@ -150,7 +151,7 @@ function liveTaskRow(): GrowthHistoryRow | null {
   const existing = tasks.value.find(row => row.id === task.value.id)
   return {
     id: task.value.id || 'running',
-    status: 'running',
+    status: task.value.paused ? 'paused' : 'running',
     startedAt: task.value.startedAt,
     commented: task.value.commented,
     scanned: task.value.scanned,
@@ -274,6 +275,15 @@ async function stopTask() {
     await load()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法停止任务'
+  }
+}
+
+async function togglePause() {
+  error.value = ''
+  try {
+    shell.applyRuntimeState(await pauseGrowthTask(!task.value.paused))
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '无法暂停任务'
   }
 }
 
@@ -506,6 +516,7 @@ function confirmDialog() {
 
 function statusLabel(status?: string) {
   if (status === 'running') return '运行中'
+  if (status === 'paused') return '已暂停'
   if (status === 'completed') return '已完成'
   if (status === 'stopped') return '已停止'
   if (status === 'error') return '异常错误'
@@ -516,6 +527,7 @@ function statusLabel(status?: string) {
 
 function statusTone(status?: string) {
   if (status === 'running') return 'info'
+  if (status === 'paused') return 'warning'
   if (status === 'completed') return 'success'
   if (status === 'error') return 'error'
   return 'default'
@@ -869,22 +881,25 @@ function closeMenus(event: MouseEvent) {
               </button>
               <h1>任务详情</h1>
             </div>
-            <button
-              v-if="selectedTask?.status === 'running'"
-              type="button"
-              class="lz-danger-fill"
-              @click="stopTask"
-            >
-              <CircleStop :size="16" />
-              停止任务
-            </button>
+            <div v-if="selectedTask?.status === 'running' || selectedTask?.status === 'paused'" class="lz-detail-actions">
+              <button type="button" class="lz-error-secondary" @click="togglePause">
+                <Pause v-if="!task.paused" :size="16" />
+                <Play v-else :size="16" />
+                {{ task.paused ? '继续' : '暂停' }}
+              </button>
+              <button type="button" class="lz-danger-fill" @click="stopTask">
+                <CircleStop :size="16" />
+                停止任务
+              </button>
+            </div>
           </div>
           <template v-if="selectedTask">
             <div class="lz-detail-metrics">
               <div>
                 <span>任务状态</span>
                 <b class="lz-tag" :data-tone="statusTone(selectedTask.status)">
-                  <Clock v-if="selectedTask.status === 'running'" :size="14" />
+                  <Pause v-if="selectedTask.status === 'paused'" :size="14" />
+                  <Clock v-else-if="selectedTask.status === 'running'" :size="14" />
                   <CircleCheck v-else-if="selectedTask.status === 'completed'" :size="14" />
                   <CircleX v-else-if="selectedTask.status === 'error'" :size="14" />
                   <CircleStop v-else :size="14" />
@@ -1138,7 +1153,7 @@ function closeMenus(event: MouseEvent) {
         </template>
 
         <template v-else-if="page === 'detail'">
-          <section v-if="selectedTask?.status === 'running'" class="lz-panel">
+          <section v-if="selectedTask?.status === 'running' || selectedTask?.status === 'paused'" class="lz-panel">
             <h2>运行日志</h2>
             <pre v-if="detailLogs.length" class="lz-log">{{ detailLogs.map(line => line.text).join('\n') }}</pre>
             <p v-else class="lz-muted">暂无日志</p>
@@ -1829,6 +1844,8 @@ function closeMenus(event: MouseEvent) {
   box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
 }
 .lz-detail-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lz-detail-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.lz-tag[data-tone="warning"] { color: #ffd60a; border-color: rgba(255, 214, 10, .28); background: rgba(255, 214, 10, .12); }
 .lz-detail-metrics, .lz-detail-times {
   display: grid;
   gap: 16px;

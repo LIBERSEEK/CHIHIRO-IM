@@ -10,6 +10,7 @@ import {
 import { DEFAULT_GROWTH_SETTINGS, normalizeGrowthSettings } from './growth-settings.mjs'
 import { extractDouyinProfile, localStorageFromStorageState } from './growth-profile.mjs'
 import { runDouyinFeedTask } from './douyin-feed.mjs'
+import { createGrowthPreview } from './growth-preview.mjs'
 
 const LOGIN_WAIT_MS = 3 * 60 * 1000
 const HISTORY_TASK_LIMIT = 10
@@ -33,7 +34,9 @@ export function createGrowthRuntime({
   let loginCancelled = false
   let task = idleTask()
   let taskStop = false
+  let taskPaused = false
   let taskPromise = null
+  const preview = createGrowthPreview()
 
   function notify() {
     for (const fn of listeners) {
@@ -171,6 +174,7 @@ export function createGrowthRuntime({
       browserDetected: browser.detected,
       task: {
         running: task.running,
+        paused: task.running && taskPaused,
         accountId: task.accountId,
         status: task.status,
         logs: task.logs.slice(-80),
@@ -179,6 +183,7 @@ export function createGrowthRuntime({
         id: task.id || '',
         startedAt: task.startedAt || '',
       },
+      preview: preview.snapshot(),
     }
   }
 
@@ -334,6 +339,7 @@ export function createGrowthRuntime({
     const settings = writeSettings(accountId, { ...readSettings(accountId), ...settingsPatch })
     if (!settings.comments.length) throw new Error('请先填写至少一条评论文案')
     taskStop = false
+    taskPaused = false
     const startedAt = new Date().toISOString()
     const taskId = `${accountId}:${startedAt}`
     task = {
@@ -368,6 +374,13 @@ export function createGrowthRuntime({
       storageStatePath: storagePath(accountId),
       settings,
       shouldStop: () => taskStop,
+      shouldPause: () => taskPaused,
+      onReady: async ({ page }) => {
+        await preview.attach(page)
+        await preview.setMuted(true)
+        pushLog('info', '已接入画中画投屏，默认静音')
+        notify()
+      },
       onLog: (level, text) => {
         pushLog(level, text)
         persistTask(accountId)
@@ -407,6 +420,7 @@ export function createGrowthRuntime({
       task.commented = result.commented
       task.status = 'completed'
       task.running = false
+      taskPaused = false
       finishTask(accountId, taskId, {
         endedAt: new Date().toISOString(),
         status: 'completed',
@@ -420,6 +434,7 @@ export function createGrowthRuntime({
       const stopped = String(error.message || '').includes('Task stopped')
       task.status = stopped ? 'stopped' : 'error'
       task.running = false
+      taskPaused = false
       finishTask(accountId, taskId, {
         endedAt: new Date().toISOString(),
         status: task.status,
@@ -430,12 +445,38 @@ export function createGrowthRuntime({
       pushLog(stopped ? 'warn' : 'error', stopped ? '任务已停止' : error.message)
       persistTask(accountId)
       notify()
+    }).finally(() => {
+      void preview.detach().then(() => notify())
     })
+    return snapshotGrowth()
+  }
+
+  async function setPreviewMode(mode) {
+    await preview.setMode(mode)
+    notify()
+    return snapshotGrowth()
+  }
+
+  async function setPreviewMuted(next) {
+    await preview.setMuted(next !== false)
+    notify()
+    return snapshotGrowth()
+  }
+
+  async function setPaused(next) {
+    if (!task.running) return snapshotGrowth()
+    taskPaused = next === true
+    task.status = taskPaused ? 'paused' : 'running'
+    await preview.setPlayback(taskPaused ? 'paused' : 'playing')
+    pushLog(taskPaused ? 'warn' : 'info', taskPaused ? '任务已暂停' : '任务已继续')
+    persistTask(task.accountId)
+    notify()
     return snapshotGrowth()
   }
 
   async function stopTask() {
     if (!task.running) return snapshotGrowth()
+    taskPaused = false
     taskStop = true
     pushLog('warn', '正在停止…')
     notify()
@@ -474,7 +515,7 @@ export function createGrowthRuntime({
     const history = readHistory(accountId)
     const record = history.tasks.find((item) => item.id === task.id)
     if (!record) return
-    record.status = task.status
+    record.status = task.running ? 'running' : task.status
     record.commented = task.commented
     record.scanned = task.scanned
     record.logs = task.logs.slice(-200)
@@ -553,6 +594,8 @@ export function createGrowthRuntime({
     browserState,
     startTask,
     stopTask,
+    setPaused,
+    setPreviewMuted,
     cleanup,
     accountView,
     readSettings,
@@ -561,6 +604,9 @@ export function createGrowthRuntime({
     decorateSnapshot,
     snapshotGrowth,
     subscribe,
+    subscribePreview: preview.subscribe,
+    previewFrame: preview.frame,
+    setPreviewMode,
     hasStorage,
     deleteTaskHistory,
     clearTaskHistory,
@@ -569,7 +615,7 @@ export function createGrowthRuntime({
 }
 
 function idleTask() {
-  return { running: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '' }
+  return { running: false, paused: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '' }
 }
 
 async function waitForDouyinLogin({ executablePath, storageStatePath, onBrowser, shouldCancel = () => false }) {

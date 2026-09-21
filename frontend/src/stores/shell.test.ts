@@ -293,6 +293,27 @@ describe('runtime account shell', () => {
     expect(shell.browserDetected).toBe(true)
   })
 
+  it('opens growth PiP when a Douyin task starts and tracks preview mode', async () => {
+    const dy = accountId('douyin:abc_1')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      accounts: { activeId: dy, accounts: [{ id: dy, nickname: '创作者', platform: 'douyin', online: true }] },
+      growth: {
+        loginClient: 'douyin',
+        task: { running: true, accountId: dy, status: 'running', logs: [], commented: 0, scanned: 0, id: 't1', startedAt: '2026-09-21T00:00:00.000Z' },
+        preview: { mode: 'pip', available: true, muted: true },
+      },
+    })))
+    const shell = useShellStore()
+    expect(shell.growthPipOpen).toBe(false)
+    await shell.refreshAccounts()
+    expect(shell.growthTask.running).toBe(true)
+    expect(shell.growthPipOpen).toBe(true)
+    expect(shell.growthTask.previewMode).toBe('pip')
+    expect(shell.growthTask.previewAvailable).toBe(true)
+    expect(shell.growthTask.previewMuted).toBe(true)
+    expect(shell.growthTask.paused).toBe(false)
+  })
+
   it('enters a clean pending-new-account state before the start response returns', async () => {
     const start = deferred<Response>()
     const staleLoggedInState = { ...state(), phase: 'ready', message: '已登录 Name qq:123', qr: { exists: true, mtime: 1 } }
