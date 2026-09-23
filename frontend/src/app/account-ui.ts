@@ -35,6 +35,21 @@ export function accountUin(account: AccountContext): string {
   return match?.[1] ?? ''
 }
 
+/** Pull a display name and public 抖音号 out of a profile line that also contains 关注/粉丝/获赞. */
+export function splitDouyinIdentity(value: string): { name: string; douyinId: string } {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  const idMatch = text.match(/抖音号\s*[:：]\s*([A-Za-z0-9._-]{2,32})/)
+  let name = idMatch ? text.slice(0, idMatch.index) : text
+  name = name.replace(/关注\s*[\d.]+(?:\s*[万亿])?\s*粉丝\s*[\d.]+(?:\s*[万亿])?\s*获赞\s*[\d.]+(?:\s*[万亿])?\s*$/u, '')
+  name = name.replace(/\s+/g, ' ').trim()
+  return { name, douyinId: idMatch?.[1] || '' }
+}
+
+export function accountDouyinId(account: AccountContext): string {
+  if (account.platform !== 'douyin') return ''
+  return account.douyinId?.trim() || splitDouyinIdentity(account.label).douyinId
+}
+
 export function accountAvatarSrc(account: AccountContext): string {
   if (account.avatar) return account.avatar
   const uin = accountUin(account)
@@ -111,6 +126,10 @@ export function accountPlatformBadge(platform: AccountContext['platform']): 'qq'
 
 export function canOpenNapCatSettings(account: AccountContext): boolean {
   return account.platform === 'qq'
+}
+
+export function canOpenGrowthSettings(account: AccountContext): boolean {
+  return account.platform === 'douyin'
 }
 
 export function clampAccountMenuPosition(clientX: number, clientY: number, viewport: { width: number; height: number }): AccountMenuPosition {

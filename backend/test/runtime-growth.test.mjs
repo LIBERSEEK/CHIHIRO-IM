@@ -10,7 +10,7 @@ import { createGrowthRuntime } from '../src/runtime/growth.mjs'
 import { createAccountStore } from '../src/runtime/accounts.mjs'
 import { isDouyinAccountId, newDouyinAccountId } from '../src/runtime/growth-ids.mjs'
 import { normalizeGrowthSettings } from '../src/runtime/growth-settings.mjs'
-import { extractDouyinProfile } from '../src/runtime/growth-profile.mjs'
+import { extractDouyinProfile, presentDouyinIdentity, splitDouyinIdentity } from '../src/runtime/growth-profile.mjs'
 import { analyzeVideoType, checkVideoActivity, matchRuleGroups, runDouyinFeedTask } from '../src/runtime/douyin-feed.mjs'
 
 async function listen(server) {
@@ -58,6 +58,20 @@ test('growth ids and settings stay in the Douyin account namespace', () => {
   assert.deepEqual(nested.authorBlockKeywords, ['广告号'])
 })
 
+test('splitDouyinIdentity keeps the name and Douyin id without follower counts', () => {
+  assert.deepEqual(splitDouyinIdentity('自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095'), {
+    name: '自由探索LIBERSEEK',
+    douyinId: '959855095',
+  })
+  assert.deepEqual(presentDouyinIdentity({
+    nickname: '自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095',
+    label: '自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095',
+  }), {
+    name: '自由探索LIBERSEEK',
+    douyinId: '959855095',
+  })
+})
+
 test('extractDouyinProfile walks nested localStorage and cookies', () => {
   const profile = extractDouyinProfile({
     localStorage: {
@@ -76,6 +90,15 @@ test('extractDouyinProfile walks nested localStorage and cookies', () => {
   assert.equal(profile.nickname, '创作者')
   assert.equal(profile.avatar, 'https://p3.douyinpic.com/aweme/avatar.jpeg')
   assert.equal(profile.uid, '123456789')
+  const visible = extractDouyinProfile({
+    nickname: '自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095',
+    localStorage: {
+      user: JSON.stringify({ nickname: '其他名字', unique_id: 'from-storage', uid: '1234567890123456' }),
+    },
+  })
+  assert.equal(visible.nickname, '自由探索LIBERSEEK')
+  assert.equal(visible.douyinId, '959855095')
+  assert.equal(visible.uid, '1234567890123456')
 })
 
 test('prepareNew overlays Douyin login onto the QQ snapshot without creating an account', async (t) => {

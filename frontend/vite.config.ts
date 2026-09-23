@@ -41,7 +41,8 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:3100',
       '/astrbot': 'http://127.0.0.1:3100',
       '/webui': 'http://127.0.0.1:3100',
-      '/i': { target: 'http://127.0.0.1:3100', ws: true },
+      // Instance sockets live under /i/{id}/. A bare /i prefix also matches /im.
+      '/i/': { target: 'http://127.0.0.1:3100', ws: true },
     },
   },
 })

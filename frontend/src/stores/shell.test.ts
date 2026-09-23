@@ -57,6 +57,23 @@ describe('runtime account shell', () => {
     expect(parsed.accounts[0].avatar).toBe(avatar)
   })
 
+  it('keeps a Douyin account label to the name and the public id', () => {
+    const dy = accountId('douyin:abc_1')
+    const parsed = parseRuntimeAccounts({
+      accounts: { activeId: dy, accounts: [
+        { id: dy, nickname: '自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095', platform: 'douyin', online: true },
+      ] },
+    })
+    expect(parsed.accounts[0].label).toBe('自由探索LIBERSEEK')
+    expect(parsed.accounts[0].douyinId).toBe('959855095')
+    const explicit = parseRuntimeAccounts({
+      accounts: { activeId: dy, accounts: [
+        { id: dy, nickname: '创作者', douyinId: 'liber.seek', platform: 'douyin', online: true },
+      ] },
+    })
+    expect(explicit.accounts[0]).toMatchObject({ label: '创作者', douyinId: 'liber.seek' })
+  })
+
   it('loads server selection then preserves a local choice across refresh', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(state())))
     const shell = useShellStore()

@@ -46,9 +46,10 @@ button { color:inherit; }
 .add-account { border:1px dashed color-mix(in srgb,var(--shell-muted) 45%,transparent); font-size:22px; line-height:1; }
 .add-account:hover { color:var(--shell-accent); border-color:var(--shell-accent); background:color-mix(in srgb,var(--shell-accent) 12%,transparent); }
 .add-account:disabled { cursor:wait; opacity:.6; }
-.add-account-popover { position:absolute; z-index:2800; left:48px; top:-6px; width:338px; padding:14px; border:1px solid var(--shell-line); border-radius:12px; color:var(--shell-text); background:color-mix(in srgb,var(--shell-rail) 98%,transparent); box-shadow:0 18px 44px rgb(0 0 0 / 34%); backdrop-filter:blur(18px); }
+.add-account-popover { position:absolute; z-index:2800; left:48px; top:-6px; width:380px; padding:14px; border:1px solid var(--shell-line); border-radius:12px; color:var(--shell-text); background:color-mix(in srgb,var(--shell-rail) 98%,transparent); box-shadow:0 18px 44px rgb(0 0 0 / 34%); backdrop-filter:blur(18px); }
 .add-account-popover::before { content:""; position:absolute; left:-7px; top:20px; width:12px; height:12px; transform:rotate(45deg); border-left:1px solid var(--shell-line); border-bottom:1px solid var(--shell-line); background:inherit; }
 .add-account-popover h2 { margin:0 0 12px; font-size:14px; font-weight:650; line-height:1.4; }
+.add-account-hint { margin:-5px 0 12px; color:var(--shell-muted); font-size:11px; line-height:1.55; }
 .rail-spinner { width:16px; height:16px; border:2px solid var(--shell-line); border-top-color:var(--shell-accent); border-radius:50%; animation:rail-spin .8s linear infinite; }
 @keyframes rail-spin { to { transform:rotate(1turn); } }
 .rail-space { min-height:8px; flex:1; }
@@ -92,7 +93,7 @@ button { color:inherit; }
 .client-menu button:hover,.client-menu button.active { background:var(--shell-line); }
 .client-menu button.active { color:var(--shell-accent); }
 .client-menu button:disabled { color:var(--shell-muted); cursor:default; opacity:.7; }
-.launch-button { height:40px; padding:0 18px; border:1px solid var(--shell-accent); border-radius:10px; color:#fff; background:var(--shell-accent); cursor:pointer; font-size:15px; }
+.launch-button { height:40px; flex:0 0 auto; padding:0 18px; border:1px solid var(--shell-accent); border-radius:10px; color:#fff; background:var(--shell-accent); cursor:pointer; font-size:15px; white-space:nowrap; }
 .launch-button:disabled { cursor:wait; opacity:.6; }
 :root[data-theme="light"] .empty-logo { background:#e5e5ea; }
 :root[data-theme="light"] .client-badge { background:#e5e5ea; }

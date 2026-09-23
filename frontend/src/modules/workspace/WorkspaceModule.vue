@@ -31,6 +31,7 @@ import UserFileManager, { panelVisible } from '../im/native/src/components/user/
 import { setNativeViewerHost } from '../im/native/viewer'
 import AgentEntry from '../agent/AgentEntry.vue'
 import GrowthWorkbench from '../growth/GrowthWorkbench.vue'
+import { resolveWorkspaceChrome } from './shell-chrome'
 import { routeForImConversation, routeForWorkspaceList, useWorkspace, type ListTab, type WorkspaceRoute } from './workspace'
 import { queryText, syncWorkspaceFromRoute, workspaceRouteMatches } from './routeSync'
 import { canRestoreNativeConversation, contactToChatInfo, findNativeConversationForRoute } from './nativeConversation'
@@ -60,8 +61,14 @@ let generation = 0
 let detach: (() => void) | undefined
 let detachViewer: (() => void) | undefined
 const hasChat = computed(() => chat.chatInfo.show.id !== 0)
-const isGrowthAccount = computed(() => shell.activeAccount?.platform === 'douyin')
-const showSettings = computed(() => route.query.settings === '1')
+const chrome = computed(() => resolveWorkspaceChrome({
+  hasAccount: Boolean(shell.activeAccount),
+  platform: shell.activeAccount?.platform,
+  listTab: workspace.listTab,
+}))
+const chromeLabel = computed(() => chrome.value.mode === 'douyin' ? '抖音' : chrome.value.mode === 'none' ? '工作台' : '消息与联系人')
+let growthChatDismissed = false
+const showSettings = computed(() => route.query.settings === '1' && chrome.value.mode === 'qq')
 const connectingNativeAccountId = ref<string | null>(null)
 const readyNativeAccountId = ref<string | null>(null)
 const nativeAccountConnecting = computed(() => {
@@ -69,20 +76,6 @@ const nativeAccountConnecting = computed(() => {
   return Boolean(account && account.status === 'online' && !error.value
     && (!login.status || readyNativeAccountId.value !== account.id))
 })
-watch(() => route.fullPath, () => {
-  const action = syncWorkspaceFromRoute({
-    name: route.name,
-    params: route.params,
-    query: route.query,
-  })
-  if (action.type === 'select-agent') {
-    workspace.selectList('workbench')
-    workspace.selectAgent(action.sessionId)
-    if (action.normalizeTo) void router.replace(action.normalizeTo)
-  } else if (action.type === 'select-list') {
-    workspace.selectList(action.tab)
-  }
-}, { immediate: true })
 const modal = computed(() => ui.popBoxList[0])
 const safeModalHtml = computed(() => DOMPurify.sanitize(modal.value?.html ?? ''))
 const popInfo = new PopInfo()
@@ -132,6 +125,53 @@ function replaceWorkspaceRoute(target: WorkspaceRoute) {
   if (!workspaceRouteMatches(route, target)) void router.replace(target)
 }
 
+function syncChrome() {
+  const next = resolveWorkspaceChrome({
+    hasAccount: Boolean(shell.activeAccount),
+    platform: shell.activeAccount?.platform,
+    listTab: workspace.listTab,
+  })
+  if (next.expandWorkbench) {
+    const expanded = workspace.listTab === 'workbench' && workspace.agentOpened && workspace.activePane === 'agent' && workspace.mobilePane === 'chat'
+    if (!expanded) workspace.expandWorkbench()
+    if (route.name === 'im' && route.query.settings !== '1' && !queryText(route.query.agent) && queryText(route.query.tab) !== 'workbench') {
+      replaceWorkspaceRoute(routeForWorkspaceList('workbench'))
+    }
+    return
+  }
+  if (next.mode !== 'qq' && workspace.activePane !== 'agent') workspace.openAgentPane()
+  if (next.listTab !== workspace.listTab) {
+    workspace.selectList(next.listTab)
+    if (route.name === 'im' && route.query.settings !== '1' && !queryText(route.query.agent)) {
+      replaceWorkspaceRoute(routeForWorkspaceList(next.listTab))
+    }
+  }
+  if (next.showGrowth) {
+    if (!growthChatDismissed) workspace.mobilePane = 'chat'
+  } else {
+    growthChatDismissed = false
+  }
+}
+
+watch(() => route.fullPath, () => {
+  const action = syncWorkspaceFromRoute({
+    name: route.name,
+    params: route.params,
+    query: route.query,
+  })
+  if (action.type === 'select-agent') {
+    workspace.selectList('workbench')
+    workspace.selectAgent(action.sessionId)
+    if (action.normalizeTo) void router.replace(action.normalizeTo)
+  } else if (action.type === 'select-list') {
+    workspace.selectList(action.tab)
+  }
+  syncChrome()
+}, { immediate: true })
+watch(() => `${shell.activeAccountId ?? ''}:${shell.activeAccount?.platform ?? ''}`, () => {
+  syncChrome()
+})
+
 function changeChat(info: BaseChatInfoElem) {
   clearNativePopups()
   workspace.selectIm()
@@ -160,8 +200,20 @@ function changeChat(info: BaseChatInfoElem) {
 }
 
 function selectList(tab: ListTab) {
+  if (tab === 'friends' && !chrome.value.contactsEnabled) return
+  if (!chrome.value.showMessageTab && tab === 'messages') return
   workspace.selectList(tab)
+  if (chrome.value.mode !== 'qq' && tab === 'workbench') workspace.openAgentPane()
+  if (chrome.value.mode === 'douyin' && tab === 'messages') {
+    growthChatDismissed = false
+    workspace.mobilePane = 'chat'
+  }
   replaceWorkspaceRoute(routeForWorkspaceList(tab))
+}
+
+function backToList() {
+  if (chrome.value.showGrowth) growthChatDismissed = true
+  workspace.mobilePane = 'list'
 }
 
 function findRoutedConversation(): BaseChatInfoElem | null {
@@ -267,10 +319,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section v-if="isGrowthAccount" class="chihiro-native-im growth-workspace" aria-label="抖音工作台">
-    <GrowthWorkbench />
-  </section>
-  <section v-else class="chihiro-native-im" aria-label="消息与联系人">
+  <section class="chihiro-native-im" :aria-label="chromeLabel">
     <Teleport to="body"><div id="chihiro-im-overlays" /></Teleport>
     <div v-if="showSettings" class="native-options">
       <UserOptions show class="active" :config="settings.sysConfig">
@@ -281,19 +330,19 @@ onBeforeUnmount(() => {
         </template>
       </UserOptions>
     </div>
-    <div v-show="!showSettings" id="base-app" :class="{ 'native-has-chat': workspace.mobilePane === 'chat', 'native-workbench-list': workspace.listTab === 'workbench' }">
+    <div v-show="!showSettings" id="base-app" :class="{ 'native-has-chat': workspace.mobilePane === 'chat', 'native-workbench-list': workspace.listTab === 'workbench' || chrome.showGrowth }">
       <aside class="native-list">
         <nav class="workspace-tabs chihiro-inbox-tabs" aria-label="列表工作区">
-          <button :class="{ 'is-on': workspace.listTab === 'messages' }" @click="selectList('messages')">
+          <button v-if="chrome.showMessageTab" type="button" :class="{ 'is-on': workspace.listTab === 'messages' }" @click="selectList('messages')">
             <span>消息</span>
-            <span v-if="unreadCount > 0" class="chihiro-inbox-unread">{{ unreadLabel }}</span>
+            <span v-if="chrome.mode === 'qq' && unreadCount > 0" class="chihiro-inbox-unread">{{ unreadLabel }}</span>
           </button>
-          <button :class="{ 'is-on': workspace.listTab === 'friends' }" @click="selectList('friends')">联系人</button>
+          <button v-if="chrome.showContactsTab" type="button" :class="{ 'is-on': workspace.listTab === 'friends' }" :disabled="!chrome.contactsEnabled" :title="chrome.contactsEnabled ? undefined : '联系人暂未开放'" @click="selectList('friends')">联系人</button>
           <span class="chihiro-inbox-tabs-spacer" />
-          <button :class="{ 'is-on': workspace.listTab === 'workbench' }" @click="selectList('workbench')">工作台</button>
+          <button type="button" :class="{ 'is-on': workspace.listTab === 'workbench' }" @click="selectList('workbench')">工作台</button>
         </nav>
-        <div v-show="workspace.listTab === 'workbench'" ref="agentSidebar" class="native-list-content" />
-        <div v-show="workspace.listTab !== 'workbench'" class="native-list-content">
+        <div v-show="workspace.listTab === 'workbench' || chrome.showGrowth" ref="agentSidebar" class="native-list-content" />
+        <div v-show="workspace.listTab !== 'workbench' && !chrome.showGrowth" class="native-list-content">
         <div v-if="shell.activeAccount?.status !== 'online'" class="native-status">登录 QQ 后查看消息和联系人</div>
         <div v-else-if="nativeAccountConnecting" class="native-status native-loading" role="status"><span class="chihiro-spinner" aria-hidden="true" />正在连接账号…</div>
         <UserFriends v-else-if="imListTab === 'friends'" :key="shell.activeAccountId ?? 'none'" :list="contacts.userList" @user-click="openContactChat" @contact-info="inspectContact" @load-history="loadHistory" />
@@ -301,10 +350,10 @@ onBeforeUnmount(() => {
         </div>
       </aside>
       <main class="native-chat">
-        <button class="workspace-back" @click="workspace.mobilePane = 'list'">返回列表</button>
-        <div v-if="workspace.activePane === 'empty'" class="native-thread-content native-status">选择 对话/任务 开始</div>
-        <div ref="agentThread" v-show="workspace.activePane === 'agent'" class="native-thread-content" />
-        <div v-show="workspace.activePane === 'im'" class="native-thread-content">
+        <button class="workspace-back" @click="backToList">返回列表</button>
+        <div v-if="workspace.activePane === 'empty' && !chrome.showGrowth" class="native-thread-content native-status">选择 对话/任务 开始</div>
+        <div ref="agentThread" v-show="workspace.activePane === 'agent' && !chrome.showGrowth" class="native-thread-content" />
+        <div v-show="workspace.activePane === 'im' && !chrome.showGrowth" class="native-thread-content">
         <div v-if="error" class="native-status" role="alert">{{ error }} <button type="button" @click="connect">重新连接</button></div>
         <div v-else-if="!shell.activeAccount || shell.activeAccount.status !== 'online'" class="native-status">账号未连接</div>
         <div v-else-if="nativeAccountConnecting" class="native-status native-loading" role="status"><span class="chihiro-spinner" aria-hidden="true" />正在连接账号…</div>
@@ -312,6 +361,7 @@ onBeforeUnmount(() => {
         <UserChat v-else-if="hasChat" :key="`${shell.activeAccountId}:${chat.chatInfo.show.type}:${chat.chatInfo.show.id}`" :chat="chat.chatInfo" :list="chat.messageList" :profile-only="profileOnly" @start-chat="sendToContact" @close-profile="closeContactProfile" />
         <div v-else class="native-status">选择 对话/任务 开始</div>
         </div>
+        <GrowthWorkbench v-if="chrome.showGrowth" class="growth-stage" />
       </main>
       <Teleport to="body">
         <TransitionGroup class="app-msg chihiro-global-toast" name="appmsg" tag="div" aria-live="polite">
@@ -349,10 +399,9 @@ onBeforeUnmount(() => {
 
 <style>
 .chihiro-native-im { width:100%; height:100%; min-height:0; color:var(--color-font); --safe-area-top:0px; --safe-area-bottom:0px; --chihiro-list-width:280px; --color-font-3:var(--color-font-2); --color-bg-yellow:color-mix(in srgb, #ffd60a 20%, var(--color-bg)); --color-bg-red:color-mix(in srgb, #ff453a 18%, var(--color-bg)); }
-.chihiro-native-im.growth-workspace { display:flex; background:#101014; }
 #chihiro-im-overlays { position:fixed; z-index:1100; inset:0; width:0; height:0; overflow:visible; pointer-events:none; }
 #chihiro-im-overlays>* { pointer-events:auto; }
-.chihiro-native-im #base-app { display:grid; grid-template-columns:280px minmax(0,1fr); overflow:hidden; }
+.chihiro-native-im #base-app { display:grid; grid-template-columns:280px minmax(0,1fr); height:100%; overflow:hidden; }
 .chihiro-native-im .native-options { position:relative; width:100%; height:100%; min-height:0; overflow:hidden; background:var(--color-bg); }
 .chihiro-native-im .native-options>.opt-main { width:100%; height:100%!important; padding:0!important; }
 .chihiro-native-im .native-options-close { display:grid; flex:0 0 36px; width:36px; height:36px; place-items:center; margin:0; padding:0; border:0; border-radius:8px; color:var(--color-font-1); background:transparent; cursor:pointer; line-height:0; }
@@ -372,6 +421,18 @@ onBeforeUnmount(() => {
   align-items:center;
   gap:6px;
   padding:0 0 2px;
+}
+.chihiro-native-im .workspace-tabs button:disabled {
+  cursor:not-allowed;
+  opacity:.38;
+}
+.chihiro-native-im .native-chat > .growth-stage {
+  position:absolute;
+  z-index:2;
+  inset:0;
+  min-width:0;
+  min-height:0;
+  overflow:hidden;
 }
 .chihiro-native-im .chihiro-inbox-unread {
   min-width:16px;
@@ -549,7 +610,8 @@ onBeforeUnmount(() => {
   .chihiro-native-im .native-options-close { flex-basis:32px; width:32px; height:32px; }
   .chihiro-native-im .native-chat { display:none; }
   .chihiro-native-im .workspace-back { display:block; position:absolute; top:0; left:0; height:32px; z-index:10; padding:4px 12px; color:var(--color-font); background:var(--color-bg); }
-  .chihiro-native-im .native-thread-content { top:32px; }
+  .chihiro-native-im .native-thread-content,
+  .chihiro-native-im .native-chat > .growth-stage { top:32px; }
   .chihiro-native-im .native-has-chat .native-list { display:none; }
   .chihiro-native-im .native-has-chat .native-chat { display:block; }
 }

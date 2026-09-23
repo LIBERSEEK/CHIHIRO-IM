@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { AccountContext, AccountId, AccountPlatform } from '../contracts'
 import { accountId, accountPlatformFromId, isDouyinAccountId } from '../contracts'
+import { splitDouyinIdentity } from '@/app/account-ui'
 import {
   filterUnreadPeers,
   readAccountSessionNotice,
@@ -51,9 +52,14 @@ export function parseRuntimeAccounts(value: unknown): { accounts: RuntimeAccount
     const instanceId = typeof item.instanceId === 'string' && item.instanceId.trim() ? item.instanceId : undefined
     const unread = typeof item.unread === 'number' && Number.isFinite(item.unread) ? Math.max(0, Math.floor(item.unread)) : undefined
     const unreadPeers = platform === 'qq' ? parseUnreadPeers(item.unreadPeers) : undefined
+    const rawLabel = [item.label, item.nickname, item.id].find((label): label is string => typeof label === 'string' && Boolean(label.trim()))!
+    const identity = platform === 'douyin' ? splitDouyinIdentity(rawLabel) : null
+    const explicitDouyinId = typeof item.douyinId === 'string' ? item.douyinId.trim() : ''
+    const douyinId = identity ? (explicitDouyinId || identity.douyinId) : ''
     return {
       id: accountId(item.id),
-      label: [item.label, item.nickname, item.id].find((label): label is string => typeof label === 'string' && Boolean(label.trim()))!,
+      label: identity ? (identity.name || '抖音账号') : rawLabel,
+      ...(douyinId ? { douyinId } : {}),
       ...(avatar ? { avatar } : {}),
       ...(instanceId && platform === 'qq' ? { instanceId } : {}),
       platform,
@@ -190,6 +196,7 @@ export const useShellStore = defineStore('shell', () => {
       status: account.status,
       ...(account.avatar ? { avatar: account.avatar } : {}),
       ...(account.instanceId ? { instanceId: account.instanceId } : {}),
+      ...(account.douyinId ? { douyinId: account.douyinId } : {}),
       ...(account.botEnabled ? { botEnabled: true } : {}),
       ...(account.botWired ? { botWired: true } : {}),
       ...(unread ? { unread } : {}),
@@ -203,6 +210,7 @@ export const useShellStore = defineStore('shell', () => {
       a.avatar === b.avatar &&
       a.instanceId === b.instanceId &&
       a.platform === b.platform &&
+      a.douyinId === b.douyinId &&
       a.status === b.status &&
       a.botEnabled === b.botEnabled &&
       a.botWired === b.botWired &&

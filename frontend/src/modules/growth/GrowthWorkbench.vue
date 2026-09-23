@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowLeft, ChevronDown, ChevronRight, CircleCheck, CircleHelp, CircleStop, CircleX,
-  Clock, LayoutGrid, LogOut, MessageSquare, Pause, Play, Settings, Smile, Trash, X,
+  Clock, Pause, Play, Smile, Trash, X,
 } from '@lucide/vue'
 import { useShellStore } from '@/stores/shell'
 import {
@@ -33,14 +33,19 @@ import {
 } from './client'
 import { GROWTH_COMMENT_TEMPLATES, templateById } from './templates'
 
-type Page = 'home' | 'history' | 'detail' | 'settings'
-type DialogKind = 'logout' | 'clear' | 'delete' | 'template' | 'import' | 'clear-history' | 'delete-task'
+type Page = 'home' | 'history' | 'detail'
+type DialogKind = 'clear' | 'delete' | 'template' | 'import' | 'clear-history' | 'delete-task'
+
+const props = withDefaults(defineProps<{
+  surface?: 'task' | 'settings'
+}>(), {
+  surface: 'task',
+})
 type VideoFilter = 'all' | 'commented'
 type NoticeKind = 'success' | 'warning' | 'error'
 type ModalKind = 'rule' | 'comments' | null
 
 const BANNER_KEY = 'chihiro-growth-template-alert-dismissed'
-const FEEDBACK_URL = 'https://github.com/LIBERSEEK/CHIHIRO/issues/new'
 const FIELD_OPTIONS: { value: GrowthRuleField; label: string }[] = [
   { value: 'nickName', label: '作者名称' },
   { value: 'videoDesc', label: '视频描述' },
@@ -75,8 +80,6 @@ const videoFilter = ref<VideoFilter>('all')
 const videoPage = ref(1)
 const notice = ref<{ kind: NoticeKind; text: string } | null>(null)
 let noticeTimer: ReturnType<typeof setTimeout> | null = null
-const toolsOpen = ref(true)
-const douyinOpen = ref(true)
 const runtimeOpen = ref(false)
 const keywordOpen = ref(false)
 const configMenuOpen = ref(false)
@@ -491,7 +494,6 @@ function confirmDialog() {
   const templateId = pendingTemplateId.value
   const taskId = pendingTaskId.value
   dialog.value = null
-  if (kind === 'logout' && accountId.value) void shell.removeAccount(accountId.value)
   if (kind === 'clear') {
     ruleGroups.value = [newRuleGroup('默认规则组')]
     maxCount.value = 10
@@ -748,6 +750,7 @@ function goHome() {
 }
 
 watch(accountId, () => {
+  if (props.surface === 'settings') return
   page.value = 'home'
   selectedTaskId.value = ''
   videoFilter.value = 'all'
@@ -761,7 +764,7 @@ watch(() => task.value.running, (running, wasRunning) => {
 watch(() => shell.browserPath, (value) => {
   if (value && value !== chromeDraft.value) chromeDraft.value = value
 }, { immediate: true })
-onMounted(() => { void load() })
+onMounted(() => { if (props.surface !== 'settings') void load() })
 onUnmounted(() => {
   window.removeEventListener('pointermove', onRangePointerMove)
   window.removeEventListener('pointerup', onRangePointerUp)
@@ -775,54 +778,37 @@ function closeMenus(event: MouseEvent) {
 </script>
 
 <template>
-  <section class="lz-workbench" aria-label="抖音工作台" @click="closeMenus">
-    <aside class="lz-sider">
-      <div class="lz-brand">
-        <img src="/icon.png" alt="" />
-        <strong>千寻</strong>
-      </div>
-      <nav class="lz-menu">
-        <button type="button" class="lz-menu-item" :class="{ 'is-open': toolsOpen }" @click="toolsOpen = !toolsOpen">
-          <LayoutGrid :size="16" />
-          <span>营销工具</span>
-          <ChevronDown class="lz-caret" :size="14" />
-        </button>
-        <div v-if="toolsOpen" class="lz-sub">
-          <button type="button" class="lz-menu-item lz-indent" :class="{ 'is-open': douyinOpen }" @click="douyinOpen = !douyinOpen">
-            <img class="lz-platform" src="@/assets/brands/douyin.svg" alt="" />
-            <span>抖音</span>
-            <ChevronDown class="lz-caret" :size="14" />
-          </button>
-          <button
-            v-if="douyinOpen"
-            type="button"
-            class="lz-menu-item lz-indent-2"
-            :class="{ 'is-on': page === 'home' || page === 'history' || page === 'detail' }"
-            @click="goHome"
-          >自动评论引流</button>
-        </div>
-        <a class="lz-menu-item" :href="FEEDBACK_URL" target="_blank" rel="noreferrer">
-          <MessageSquare :size="16" />
-          <span>建议与反馈</span>
-        </a>
-        <button type="button" class="lz-menu-item" :class="{ 'is-on': page === 'settings' }" @click="page = 'settings'">
-          <Settings :size="16" />
-          <span>全局设置</span>
-        </button>
-      </nav>
-      <button
-        type="button"
-        class="lz-logout"
-        :disabled="!accountId"
-        @click="dialog = { kind: 'logout', title: '退出账号', message: '退出后将停止该抖音实例并删除隔离数据。', ok: '退出', danger: true }"
-      >
-        <LogOut :size="16" />
-      </button>
-    </aside>
-
+  <section class="lz-workbench" :aria-label="surface === 'settings' ? '全局设置' : '抖音工作台'" @click="closeMenus">
     <main class="lz-main">
       <div v-if="notice" class="lz-toast" :data-kind="notice.kind">{{ notice.text }}</div>
 
+      <div v-if="surface === 'settings'" class="lz-body lz-settings-body">
+        <section class="lz-settings-block">
+          <div class="lz-settings-title">
+            <h2>Chrome浏览器路径</h2>
+            <button
+              type="button"
+              class="lz-start lz-save"
+              :disabled="chromeSaving"
+              @click="saveChromePath"
+            >{{ chromeSaving ? '正在验证路径...' : '保存' }}</button>
+          </div>
+          <div class="lz-settings-card">
+            <label class="lz-field">可执行文件路径
+              <span class="lz-path">
+                <input v-model="chromeDraft" type="text" spellcheck="false" placeholder="/path/to/Google Chrome" :disabled="picking || chromeSaving" />
+                <button type="button" class="lz-ghost" :disabled="picking || chromeSaving" @click="chooseChrome">选择</button>
+              </span>
+            </label>
+            <div class="lz-settings-hint">
+              <p>Mac：默认/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</p>
+              <p>Windows：请选择 chrome.exe 或手动输入</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <template v-else>
       <header v-if="page === 'home'" class="lz-top">
         <div class="lz-top-left">
           <button type="button" class="lz-ghost" @click="page = 'history'">
@@ -1211,33 +1197,8 @@ function closeMenus(event: MouseEvent) {
             <div v-else class="lz-empty lz-empty-sm">暂无视频记录</div>
           </section>
         </template>
-
-        <template v-else>
-          <section class="lz-settings-block">
-            <div class="lz-settings-title">
-              <h2>Chrome浏览器路径</h2>
-              <button
-                type="button"
-                class="lz-start lz-save"
-                :disabled="chromeSaving"
-                @click="saveChromePath"
-              >{{ chromeSaving ? '正在验证路径...' : '保存' }}</button>
-            </div>
-            <div class="lz-settings-card">
-              <label class="lz-field">可执行文件路径
-                <span class="lz-path">
-                  <input v-model="chromeDraft" type="text" spellcheck="false" placeholder="/path/to/Google Chrome" :disabled="picking || chromeSaving" />
-                  <button type="button" class="lz-ghost" :disabled="picking || chromeSaving" @click="chooseChrome">选择</button>
-                </span>
-              </label>
-              <div class="lz-settings-hint">
-                <p>Mac：默认/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</p>
-                <p>Windows：请选择 chrome.exe 或手动输入</p>
-              </div>
-            </div>
-          </section>
-        </template>
       </div>
+      </template>
     </main>
 
     <input ref="importInput" class="lz-file" type="file" accept="application/json" @change="onImportFile" />
@@ -1369,8 +1330,8 @@ function closeMenus(event: MouseEvent) {
   --lz-line: rgba(255, 255, 255, .09);
   --lz-green: #32f08c;
   position: relative;
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -1378,58 +1339,8 @@ function closeMenus(event: MouseEvent) {
   background: var(--lz-bg);
   font-family: Inter, ui-sans-serif, system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
 }
-.lz-sider {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  padding: 16px 10px 12px;
-  background: #101014;
-}
-.lz-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 2px 8px 18px;
-  color: #fff;
-  font-size: 16px;
-}
-.lz-brand img { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; }
-.lz-menu { display: grid; gap: 2px; }
-.lz-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--lz-text);
-  background: transparent;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-  font: inherit;
-  font-size: 14px;
-}
-.lz-menu-item .lz-caret { margin-left: auto; transition: transform .15s; }
-.lz-menu-item.is-open .lz-caret { transform: rotate(180deg); }
-.lz-menu-item.is-on { color: var(--lz-green); background: rgba(50, 240, 140, .12); }
-.lz-indent { padding-left: 28px; }
-.lz-indent-2 { padding-left: 44px; }
-.lz-platform { width: 16px; height: 16px; object-fit: contain; }
-.lz-logout {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 40px;
-  margin-top: auto;
-  border: 0;
-  border-radius: 999px;
-  color: var(--lz-text);
-  background: #1c1c22;
-  cursor: pointer;
-}
-.lz-main { position: relative; display: flex; min-width: 0; min-height: 0; flex-direction: column; }
+.lz-main { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
+.lz-settings-body { padding-top: 28px; }
 .lz-top {
   position: sticky;
   top: 0;
@@ -2100,9 +2011,6 @@ function closeMenus(event: MouseEvent) {
 .lz-rule-row { align-items: center; }
 .lz-rule-row select { width: 120px; flex: 0 0 120px; }
 @media (max-width: 980px) {
-  .lz-workbench { grid-template-columns: 1fr; }
-  .lz-sider { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .lz-logout { width: 40px; margin-top: 0; }
   .lz-tr { grid-template-columns: 1fr; padding: 10px 12px; }
   .lz-detail-metrics, .lz-detail-times { grid-template-columns: 1fr 1fr; }
   .lz-top, .lz-body, .lz-detail-head { padding-left: 16px; padding-right: 16px; }

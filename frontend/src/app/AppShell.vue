@@ -6,6 +6,7 @@ import { SlidersHorizontal, Settings } from '@lucide/vue'
 import AccountProfilePop from '@/app/AccountProfilePop.vue'
 import AccountPlatformBadge from '@/app/AccountPlatformBadge.vue'
 import ExternalSettingsDialog from '@/app/ExternalSettingsDialog.vue'
+import GrowthSettingsDialog from '@/app/GrowthSettingsDialog.vue'
 import GrowthPip from '@/modules/growth/GrowthPip.vue'
 import GrowthLoginPanel from '@/modules/growth/GrowthLoginPanel.vue'
 import { useAssistantStore } from '@/modules/assistant/session'
@@ -21,6 +22,7 @@ import {
   accountTitle,
   accountUnreadLabel,
   canCloseExitDialog,
+  canOpenGrowthSettings,
   canOpenNapCatSettings,
   clampAccountMenuPosition,
   shouldCloseExitDialogForKey,
@@ -37,6 +39,7 @@ const route = useRoute()
 const router = useRouter()
 const settingsOpen = ref(false)
 const externalSettings = ref<{ title: string; src: string } | null>(null)
+const growthSettings = ref<{ title: string } | null>(null)
 const accountMenu = ref<{ account: AccountContext; x: number; y: number } | null>(null)
 const accountProfile = ref<{ account: AccountContext; anchor: DOMRect } | null>(null)
 const exitAccount = ref<AccountContext | null>(null)
@@ -62,9 +65,9 @@ const shellView = computed(() => resolveShellViewState({
 const showRuntimeBootLoading = computed(() => shellView.value.showRuntimeBootLoading)
 const loginInProgress = computed(() => shellView.value.loginInProgress)
 const loginNeedsRestart = computed(() => shellView.value.loginNeedsRestart)
-const showLoginPanel = computed(() => shellView.value.showLoginPanel)
+// The empty state is now the Agent-led workbench; login remains available from the rail.
+const showLoginPanel = computed(() => shellView.value.showLoginPanel && !shellView.value.showEmptyLauncher)
 const loginMessage = computed(() => shellView.value.loginMessage)
-const showEmptyLauncher = computed(() => shellView.value.showEmptyLauncher)
 const exitBusy = computed(() => Boolean(exitAccount.value && shell.removingAccountId === exitAccount.value.id))
 const profileAccount = computed(() => {
   const pop = accountProfile.value
@@ -76,12 +79,7 @@ const selectedClient = computed(() => shell.clients.find(client => client.id ===
   ?? shell.clients.find(client => client.enabled)
   ?? shell.clients[0])
 const qrSrc = computed(() => `/api/runtime/qq/qr?v=${shell.qrVersion || Date.now()}`)
-const loginKind = computed(() => {
-  if (shell.loginClient === 'douyin' || shell.activeAccount?.platform === 'douyin' || shell.runtimePhase === 'browser_setup') {
-    return 'douyin' as const
-  }
-  return 'qq' as const
-})
+const loginKind = computed(() => shellView.value.loginKind)
 function applyTheme(mode: ThemeMode) {
   themeMode.value = applyShellTheme(mode).mode
 }
@@ -171,6 +169,12 @@ function openAccountNapCatSettings(account: AccountContext) {
   settingsOpen.value = false
   externalSettings.value = { title: `NapCat 设置 · ${account.label}`, src: '/webui' }
 }
+function openAccountGrowthSettings(account: AccountContext) {
+  shell.selectAccount(account.id)
+  closeAccountMenu()
+  settingsOpen.value = false
+  growthSettings.value = { title: `全局设置 · ${account.label}` }
+}
 function closeMenus(event: MouseEvent) {
   if (suppressDocumentClose) return
   const target = event.target as Element
@@ -183,6 +187,10 @@ function closeMenus(event: MouseEvent) {
   }
 }
 function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && growthSettings.value) {
+    growthSettings.value = null
+    return
+  }
   if (event.key === 'Escape' && accountProfile.value) closeAccountProfile()
   if (shouldCloseExitDialogForKey(event.key, Boolean(exitAccount.value), exitBusy.value)) closeExitDialog()
   if (shouldCloseImSettingsForKey(event.key, route.name, route.query.settings)) {
@@ -196,23 +204,32 @@ function selectClient(id: string) {
   selectedClientId.value = id
   clientMenuOpen.value = false
 }
-function startSelectedClient() {
-  if (!selectedClient.value?.enabled) return
+async function startSelectedClient() {
+  const client = selectedClient.value
+  if (!client?.enabled || shell.adding) return
   closeAddLauncher()
   void router.push('/im')
-  void shell.addAccount(selectedClient.value.id)
+  if (client.id === 'qq' && loginKind.value === 'douyin' && loginInProgress.value) await shell.cancelLogin()
+  await shell.addAccount(client.id)
 }
 function openAddLauncher() {
   settingsOpen.value = false
   closeAccountMenu()
   closeAccountProfile()
-  if (loginInProgress.value || showEmptyLauncher.value) {
-    closeAddLauncher()
-    void router.push('/im')
-    return
-  }
   addLauncherOpen.value = !addLauncherOpen.value
   if (!addLauncherOpen.value) clientMenuOpen.value = false
+}
+function openAddLauncherEvent(event: Event) {
+  const detail = (event as CustomEvent<{ client?: unknown }>).detail
+  const preferredClient = detail && (detail.client === 'qq' || detail.client === 'douyin') ? detail.client : null
+  if (preferredClient) selectedClientId.value = preferredClient
+  suppressDocumentClose = true
+  settingsOpen.value = false
+  closeAccountMenu()
+  closeAccountProfile()
+  addLauncherOpen.value = true
+  clientMenuOpen.value = false
+  queueMicrotask(() => { suppressDocumentClose = false })
 }
 async function bootstrapRuntime() {
   try {
@@ -244,6 +261,7 @@ onMounted(() => {
   document.addEventListener('click', closeMenus)
   document.addEventListener('keydown', onKeydown)
   window.addEventListener('chihiro-open-external-settings', openExternalSettingsEvent)
+  window.addEventListener('chihiro-open-add-account', openAddLauncherEvent)
 })
 onUnmounted(() => {
   mounted = false
@@ -252,6 +270,7 @@ onUnmounted(() => {
   document.removeEventListener('click', closeMenus)
   document.removeEventListener('keydown', onKeydown)
   window.removeEventListener('chihiro-open-external-settings', openExternalSettingsEvent)
+  window.removeEventListener('chihiro-open-add-account', openAddLauncherEvent)
   stopTheme?.()
   runtimeStream?.close()
   runtimeStream = undefined
@@ -281,8 +300,9 @@ onUnmounted(() => {
           <span v-if="shell.adding" class="rail-spinner" aria-hidden="true" />
           <span v-else aria-hidden="true">+</span>
         </button>
-        <div v-if="addLauncherOpen && !showLoginPanel" class="add-account-popover" role="dialog" aria-label="添加账号" @click.stop>
+        <div v-if="addLauncherOpen" class="add-account-popover" role="dialog" aria-label="添加账号" @click.stop>
           <h2>添加账号</h2>
+          <p v-if="selectedClient?.hint" class="add-account-hint">{{ selectedClient.hint }}</p>
           <div class="launch-row">
             <div class="client-dropdown">
               <button type="button" class="client-drop-button" aria-haspopup="listbox" :aria-expanded="clientMenuOpen" @click.stop="clientMenuOpen = !clientMenuOpen">
@@ -299,7 +319,7 @@ onUnmounted(() => {
                 </button>
               </div>
             </div>
-            <button type="button" class="launch-button" :disabled="shell.adding || !selectedClient?.enabled" @click="startSelectedClient">启动</button>
+            <button type="button" class="launch-button" :disabled="shell.adding || !selectedClient?.enabled" @click="startSelectedClient">继续登录</button>
           </div>
         </div>
       </div>
@@ -327,34 +347,9 @@ onUnmounted(() => {
       </div>
       <RouterView v-else />
     </main>
-    <section v-if="showLoginPanel" class="login-panel" :class="{ 'login-panel-fill': loginKind === 'douyin' && !showEmptyLauncher }" :aria-label="loginKind === 'douyin' ? '抖音登录' : 'QQ 登录'">
-      <div v-if="showEmptyLauncher" class="login-card empty-launcher">
-        <div class="empty-title">
-          <img class="empty-logo" src="/icon.png" alt="" />
-          <h1>千寻</h1>
-        </div>
-        <p class="empty-tagline">千人千面, 千域千寻</p>
-        <div class="launch-row">
-          <div class="client-dropdown">
-            <button type="button" class="client-drop-button" aria-haspopup="listbox" :aria-expanded="clientMenuOpen" @click.stop="clientMenuOpen = !clientMenuOpen">
-              <span class="client-badge">{{ selectedClient?.badge }}</span>
-              <span>{{ selectedClient?.name }}</span>
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4.2 6.2a.75.75 0 0 1 1.06 0L8 8.94l2.74-2.74a.75.75 0 1 1 1.06 1.06l-3.27 3.27a.75.75 0 0 1-1.06 0L4.2 7.26a.75.75 0 0 1 0-1.06z"/></svg>
-            </button>
-            <div v-if="clientMenuOpen" class="client-menu" role="listbox">
-              <button v-for="client in shell.clients" :key="client.id" type="button" role="option"
-                :aria-selected="client.id === selectedClient?.id" :disabled="!client.enabled"
-                :class="{ active: client.id === selectedClient?.id }" @click.stop="selectClient(client.id)">
-                <span class="client-badge">{{ client.badge }}</span>
-                <span>{{ client.name }}{{ client.enabled ? '' : '（即将支持）' }}</span>
-              </button>
-            </div>
-          </div>
-          <button type="button" class="launch-button" :disabled="shell.adding || !selectedClient?.enabled" @click="startSelectedClient">启动</button>
-        </div>
-      </div>
+    <section v-if="showLoginPanel" class="login-panel" :class="{ 'login-panel-fill': loginKind === 'douyin' }" :aria-label="loginKind === 'douyin' ? '抖音登录' : 'QQ 登录'">
       <GrowthLoginPanel
-        v-else-if="loginKind === 'douyin'"
+        v-if="loginKind === 'douyin'"
         :busy="shell.runtimePhase === 'logging_in'"
         :canceling="shell.cancelingLogin"
         :message="loginMessage"
@@ -379,6 +374,7 @@ onUnmounted(() => {
     </section>
     <div v-if="accountMenu" class="account-context-menu" :style="{ left: `${accountMenu.x}px`, top: `${accountMenu.y}px` }" @click.stop>
       <button v-if="canOpenNapCatSettings(accountMenu.account)" type="button" @click="openAccountNapCatSettings(accountMenu.account)"><SlidersHorizontal :size="16" />NapCat 设置</button>
+      <button v-if="canOpenGrowthSettings(accountMenu.account)" type="button" @click="openAccountGrowthSettings(accountMenu.account)"><Settings :size="16" />全局设置</button>
       <button type="button" @click="relogin(accountMenu.account)">{{ accountMenu.account.status === 'online' ? '重新登录' : '登录账号' }}</button>
       <button type="button" class="danger" @click="askExit(accountMenu.account)">退出账号</button>
     </div>
@@ -400,6 +396,11 @@ onUnmounted(() => {
       :title="externalSettings?.title ?? ''"
       :src="externalSettings?.src ?? ''"
       @close="externalSettings = null"
+    />
+    <GrowthSettingsDialog
+      :open="growthSettings !== null"
+      :title="growthSettings?.title ?? ''"
+      @close="growthSettings = null"
     />
     <GrowthPip />
     <p v-if="shell.error" class="shell-error" role="alert">{{ shell.error }} <button type="button" @click="shell.refreshAccounts">重试</button></p>

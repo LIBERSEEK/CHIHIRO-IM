@@ -27,6 +27,7 @@ export interface AccountContext {
   botEnabled?: boolean
   botWired?: boolean
   unread?: number
+  douyinId?: string
 }
 
 export interface AgentSessionRef {

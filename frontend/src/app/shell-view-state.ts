@@ -21,6 +21,7 @@ export interface ShellViewState {
   loginNeedsRestart: boolean
   showLoginPanel: boolean
   showEmptyLauncher: boolean
+  loginKind: 'qq' | 'douyin'
   loginMessage: string
 }
 
@@ -36,7 +37,8 @@ export function resolveShellViewState(input: ShellViewStateInput): ShellViewStat
     loginInProgress || !input.activeAccount || input.activeAccount.status !== 'online'
   )
   const showEmptyLauncher = !showRuntimeBootLoading && !loginInProgress && !input.activeAccount
-  const loginMessage = resolveLoginMessage(input, loginInProgress)
+  const kind = resolveLoginKind(input)
+  const loginMessage = resolveLoginMessage(input, loginInProgress, kind)
   return {
     accountRouteActive,
     showRuntimeBootLoading,
@@ -44,19 +46,24 @@ export function resolveShellViewState(input: ShellViewStateInput): ShellViewStat
     loginNeedsRestart,
     showLoginPanel,
     showEmptyLauncher,
+    loginKind: kind,
     loginMessage,
   }
 }
 
-function loginKind(input: ShellViewStateInput): 'qq' | 'douyin' {
+/** A QQ login in progress stays a QQ card, even if the selected account is Douyin. */
+export function resolveLoginKind(input: ShellViewStateInput): 'qq' | 'douyin' {
+  const qqLogin = input.loginClient !== 'douyin' && (
+    input.adding || input.pendingAdd || input.runtimePhase === 'starting' || input.runtimePhase === 'qr' || input.runtimePhase === 'qr_expired'
+  )
+  if (qqLogin) return 'qq'
   if (input.loginClient === 'douyin' || input.activeAccount?.platform === 'douyin' || input.runtimePhase === 'browser_setup') {
     return 'douyin'
   }
   return 'qq'
 }
 
-function resolveLoginMessage(input: ShellViewStateInput, loginInProgress: boolean): string {
-  const kind = loginKind(input)
+function resolveLoginMessage(input: ShellViewStateInput, loginInProgress: boolean, kind: 'qq' | 'douyin'): string {
   if (input.cancelingLogin) return '正在取消登录…'
   if (input.pendingAdd || (kind === 'douyin' && loginInProgress)) {
     if (kind === 'douyin') {

@@ -7,10 +7,13 @@ import {
   accountPlatformBadge,
   accountPlatformBrand,
   accountQzoneUrl,
+  accountDouyinId,
   accountTitle,
   accountUin,
+  splitDouyinIdentity,
   accountUnreadLabel,
   canCloseExitDialog,
+  canOpenGrowthSettings,
   canOpenNapCatSettings,
   clampAccountMenuPosition,
   openExternalFrame,
@@ -79,6 +82,32 @@ describe('account rail UI contract', () => {
     expect(canOpenNapCatSettings(account({ platform: 'telegram' as never }))).toBe(false)
     expect(canOpenNapCatSettings(account({ platform: 'wechat' as never }))).toBe(false)
     expect(canOpenNapCatSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(false)
+  })
+
+  it('keeps growth settings scoped to Douyin accounts', () => {
+    expect(canOpenGrowthSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(true)
+    expect(canOpenGrowthSettings(account({ platform: 'qq' }))).toBe(false)
+    expect(canOpenGrowthSettings(account({ platform: 'telegram' as never }))).toBe(false)
+  })
+
+  it('splits a Douyin profile line into the name and the Douyin id', () => {
+    expect(splitDouyinIdentity('自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095')).toEqual({
+      name: '自由探索LIBERSEEK',
+      douyinId: '959855095',
+    })
+    expect(splitDouyinIdentity('创作者 关注 1.2万 粉丝 3 获赞 10 抖音号: liber.seek')).toEqual({
+      name: '创作者',
+      douyinId: 'liber.seek',
+    })
+    expect(splitDouyinIdentity('创作者')).toEqual({ name: '创作者', douyinId: '' })
+    const value = account({
+      id: accountId('douyin:abc'),
+      label: '自由探索LIBERSEEK',
+      platform: 'douyin',
+      douyinId: '959855095',
+    })
+    expect(accountDouyinId(value)).toBe('959855095')
+    expect(accountDouyinId(account())).toBe('')
   })
 
   it('labels Douyin accounts without QQ number, Qzone or Bot badge', () => {

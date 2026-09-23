@@ -223,8 +223,8 @@ async function setMode(next: 'pip' | 'window') {
           :disabled="muting"
           @click="toggleMute"
         >
-          <Volume2 v-if="muted" :size="14" />
-          <VolumeX v-else :size="14" />
+          <VolumeX v-if="muted" :size="14" />
+          <Volume2 v-else :size="14" />
           <span>静音</span>
         </button>
         <button

@@ -61,6 +61,15 @@ export const useWorkspace = defineStore('workspace', () => {
     activePane.value = 'empty'
     mobilePane.value = 'list'
   }
+  function openAgentPane() {
+    agentOpened.value = true
+    activePane.value = 'agent'
+  }
+  function expandWorkbench() {
+    listTab.value = 'workbench'
+    openAgentPane()
+    mobilePane.value = 'chat'
+  }
   return { listTab, activePane, agentOpened, agentSessionId, mobilePane, drafts,
-    selectList, selectAgent, selectIm, closeAgent }
+    selectList, selectAgent, selectIm, closeAgent, openAgentPane, expandWorkbench }
 })

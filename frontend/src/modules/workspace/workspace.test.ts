@@ -106,4 +106,18 @@ describe('shared IM and Agent workspace', () => {
     workspace.selectAgent('')
     expect(workspace.drafts['']).toBeUndefined()
   })
+
+  it('expands the shared workbench without dropping the open Agent draft', () => {
+    const workspace = useWorkspace()
+    workspace.selectIm()
+    workspace.selectAgent('research')
+    workspace.drafts.research = '整理今天的信息'
+    workspace.expandWorkbench()
+    expect(workspace.listTab).toBe('workbench')
+    expect(workspace.activePane).toBe('agent')
+    expect(workspace.agentOpened).toBe(true)
+    expect(workspace.agentSessionId).toBe('research')
+    expect(workspace.mobilePane).toBe('chat')
+    expect(workspace.drafts.research).toBe('整理今天的信息')
+  })
 })

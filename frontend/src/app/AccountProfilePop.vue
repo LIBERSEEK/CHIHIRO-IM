@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Check, Copy } from '@lucide/vue'
 
 import type { AccountContext } from '@/contracts'
-import { accountAvatarSrc, accountQzoneUrl, accountUin, openExternalFrame } from '@/app/account-ui'
+import { accountAvatarSrc, accountDouyinId, accountQzoneUrl, accountUin, openExternalFrame } from '@/app/account-ui'
 import AccountPlatformBadge from '@/app/AccountPlatformBadge.vue'
 
 type AnchorRect = {
@@ -29,8 +29,11 @@ const copied = ref(false)
 let copiedTimer: number | undefined
 
 const uin = computed(() => accountUin(props.account))
+const douyinId = computed(() => accountDouyinId(props.account))
 const avatarSrc = computed(() => accountAvatarSrc(props.account))
 const qzoneUrl = computed(() => accountQzoneUrl(props.account))
+const copyValue = computed(() => props.account.platform === 'douyin' ? douyinId.value : uin.value)
+const copyLabel = computed(() => props.account.platform === 'douyin' ? '抖音号' : 'QQ 号')
 
 function clampPos(width: number, height: number) {
   let left = props.anchor.right + 10
@@ -51,9 +54,9 @@ function place() {
 }
 
 async function copyUin() {
-  if (!uin.value) return
+  if (!copyValue.value) return
   try {
-    await navigator.clipboard.writeText(uin.value)
+    await navigator.clipboard.writeText(copyValue.value)
     copied.value = true
     if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
     copiedTimer = window.setTimeout(() => { copied.value = false }, 1500)
@@ -117,8 +120,19 @@ onBeforeUnmount(() => {
               <Copy v-else :size="14" />
             </button>
           </div>
-          <div v-else class="account-profile-qq">
-            <span>抖音账号</span>
+          <div v-else-if="account.platform === 'douyin'" class="account-profile-qq">
+            <span>抖音号 {{ douyinId || '—' }}</span>
+            <button
+              v-if="douyinId"
+              type="button"
+              class="account-profile-copy"
+              :title="copied ? '已复制' : `复制${copyLabel}`"
+              :aria-label="copied ? '已复制' : `复制${copyLabel}`"
+              @click="copyUin"
+            >
+              <Check v-if="copied" :size="14" />
+              <Copy v-else :size="14" />
+            </button>
           </div>
         </div>
       </div>

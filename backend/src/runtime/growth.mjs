@@ -8,7 +8,7 @@ import {
   writeBrowserConfig,
 } from './growth-browser.mjs'
 import { DEFAULT_GROWTH_SETTINGS, normalizeGrowthSettings } from './growth-settings.mjs'
-import { extractDouyinProfile, localStorageFromStorageState } from './growth-profile.mjs'
+import { extractDouyinProfile, localStorageFromStorageState, presentDouyinIdentity } from './growth-profile.mjs'
 import { runDouyinFeedTask } from './douyin-feed.mjs'
 import { createGrowthPreview } from './growth-preview.mjs'
 
@@ -193,8 +193,12 @@ export function createGrowthRuntime({
       if (!isDouyinAccountId(account.id)) return account
       const online = hasStorage(account.id) && phase !== 'logging_in'
       const avatar = avatarPublicUrl(account.id) || account.avatar || ''
+      const identity = presentDouyinIdentity(account)
       return {
         ...account,
+        nickname: identity.name || account.nickname || '抖音账号',
+        label: identity.name || account.label || account.nickname || '抖音账号',
+        ...(identity.douyinId ? { douyinId: identity.douyinId } : {}),
         avatar,
         client: 'douyin',
         platform: 'douyin',
@@ -289,7 +293,11 @@ export function createGrowthRuntime({
         images: result.images || [],
         nickname: result.nickname || '',
       })
-      const nickname = result.nickname || extracted.nickname || '抖音账号'
+      const identity = presentDouyinIdentity({
+        nickname: result.nickname || extracted.nickname || '',
+        douyinId: result.douyinId || extracted.douyinId || '',
+      })
+      const nickname = identity.name || '抖音账号'
       const uid = result.uid || extracted.uid || ''
       const savedAvatar = saveAvatarBytes(id, result.avatarBytes)
       const avatar = savedAvatar || result.avatar || extracted.avatar || ''
@@ -299,6 +307,7 @@ export function createGrowthRuntime({
         platform: 'douyin',
         nickname,
         label: nickname,
+        ...(identity.douyinId ? { douyinId: identity.douyinId } : {}),
         avatar,
         uid,
       })
@@ -659,6 +668,7 @@ async function waitForDouyinLogin({ executablePath, storageStatePath, onBrowser,
         storage: { ...signals.storage, ...selfSignals.storage },
         images: [...selfSignals.images, ...signals.images],
         nickname: selfSignals.nickname || signals.nickname,
+        profileText: selfSignals.profileText || signals.profileText,
       }
     } catch {
       /* home-page signals are enough */
@@ -668,12 +678,13 @@ async function waitForDouyinLogin({ executablePath, storageStatePath, onBrowser,
       localStorage: { ...localStorageFromStorageState(storageState), ...signals.storage },
       cookies: storageState.cookies || [],
       images: signals.images,
-      nickname: signals.nickname,
+      nickname: signals.profileText || signals.nickname,
     })
     const avatarBytes = profile.avatar ? await downloadAvatar(context, profile.avatar) : null
     return {
       storageState,
       nickname: profile.nickname,
+      douyinId: profile.douyinId,
       uid: profile.uid,
       avatar: profile.avatar,
       images: signals.images,
@@ -710,13 +721,16 @@ async function collectDouyinSignals(page) {
       images.push(src)
       if (images.length >= 40) break
     }
+    const root = document.querySelector('[data-e2e="user-info"]')
+    const profileText = String(root?.innerText || root?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300)
     const nickname = String(
-      document.querySelector('[data-e2e="user-info"]')?.textContent
+      root?.querySelector('h1')?.textContent
+      || document.querySelector('[data-e2e="user-info"] h1')?.textContent
       || document.querySelector('[class*="nickname"]')?.textContent
-      || ''
-    ).trim().slice(0, 40)
-    return { storage, images, nickname }
-  }).catch(() => ({ storage: {}, images: [], nickname: '' }))
+      || profileText
+    ).trim().slice(0, 80)
+    return { storage, images, nickname, profileText }
+  }).catch(() => ({ storage: {}, images: [], nickname: '', profileText: '' }))
 }
 
 async function downloadAvatar(context, url) {
