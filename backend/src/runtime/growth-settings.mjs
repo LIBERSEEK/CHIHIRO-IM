@@ -21,7 +21,8 @@ export function normalizeGrowthSettings(value = {}) {
   const onlyCommentActiveVideo = value.onlyCommentActiveVideo === true
   const blockKeywords = toStringList(value.blockKeywords, [])
   const authorBlockKeywords = toStringList(value.authorBlockKeywords, [])
-  const ruleGroups = normalizeRuleGroups(value)
+  const campaign = normalizeCampaign(value.campaign)
+  const ruleGroups = applyLearnedCampaignRules(normalizeRuleGroups(value), campaign)
   const comments = flattenComments(ruleGroups, value.comments)
   return {
     maxCount,
@@ -35,7 +36,29 @@ export function normalizeGrowthSettings(value = {}) {
     authorBlockKeywords,
     ruleGroups,
     presets: normalizePresets(value.presets),
+    campaign,
   }
+}
+
+function applyLearnedCampaignRules(groups, campaign) {
+  if (!campaign?.enabled || !campaign.learnedTags.length) return groups
+  const learned = new Set(campaign.learnedTags)
+  return groups.map((group) => {
+    const children = Array.isArray(group.children)
+      ? applyLearnedCampaignRules(group.children, campaign)
+      : []
+    if (group.id !== 'campaign') return { ...group, children }
+    const rules = (group.rules || []).filter((rule) => !(rule.field === 'videoTag' && learned.has(rule.keyword)))
+    const existing = new Set(rules.filter((rule) => rule.field === 'videoDesc').map((rule) => rule.keyword))
+    for (const keyword of learned) {
+      if (!existing.has(keyword)) rules.push({ field: 'videoDesc', keyword })
+    }
+    return {
+      ...group,
+      children,
+      rules,
+    }
+  })
 }
 
 export function flattenComments(ruleGroups, fallbackComments) {
@@ -97,7 +120,7 @@ function normalizeRuleGroup(group, index, depth) {
       const field = ['nickName', 'videoDesc', 'videoTag'].includes(rule.field) ? rule.field : 'nickName'
       const keyword = String(rule.keyword || '').trim().slice(0, 80)
       return [{ field, keyword }]
-    }).slice(0, 20)
+      }).slice(0, 40)
     : []
   return {
     id,
@@ -111,7 +134,49 @@ function normalizeRuleGroup(group, index, depth) {
     commentImagePath: children.length ? '' : String(group.commentImagePath || '').slice(0, 500),
     commentImageType: group.commentImageType === 'file' ? 'file' : 'folder',
     commentImageName: children.length ? '' : String(group.commentImageName || '').slice(0, 200),
+    ...(group.commentSource === 'model' ? { commentSource: 'model' } : {}),
   }
+}
+
+function normalizeCampaign(value) {
+  if (!value || value.enabled !== true) return null
+  const tags = toStringList(value.seedTags, []).slice(0, 12)
+  return {
+    enabled: true,
+    briefId: String(value.briefId || '').slice(0, 40),
+    form: value.form === 'image' ? 'image' : 'text',
+    audience: String(value.audience || '').slice(0, 80),
+    offer: String(value.offer || '').slice(0, 120),
+    benefit: String(value.benefit || '').slice(0, 240),
+    goal: String(value.goal || '').slice(0, 120),
+    tone: String(value.tone || '').slice(0, 40),
+    interaction: value.interaction === 'comment_like' ? 'comment_like' : 'comment',
+    seedTags: tags,
+    learnedTags: toStringList(value.learnedTags, []).slice(0, 12),
+    learningCandidates: normalizeLearningCandidates(value.learningCandidates),
+    excludes: toStringList(value.excludes, []).slice(0, 20),
+    commentProvider: commentChoice(value.commentProvider),
+    commentModel: commentChoice(value.commentModel),
+  }
+}
+
+function commentChoice(value) {
+  const text = String(value || '').trim()
+  if (!text || text.length > 120 || /[\u0000-\u001f\u007f]/.test(text)) return ''
+  return text
+}
+
+function normalizeLearningCandidates(value) {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const keyword = String(item.keyword || '').trim().slice(0, 40)
+    const count = clampInt(item.count, 1, 3, 1)
+    const videoIds = Array.isArray(item.videoIds)
+      ? item.videoIds.map((id) => String(id || '').trim()).filter(Boolean).slice(-3)
+      : []
+    return keyword ? [{ keyword, count, videoIds }] : []
+  }).slice(0, 24)
 }
 
 function walkLeaves(groups, visit) {

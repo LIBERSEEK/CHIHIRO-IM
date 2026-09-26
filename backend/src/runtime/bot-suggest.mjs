@@ -1,6 +1,6 @@
 import { logError } from './log.mjs'
 import { normalizeBotSession, sessionPeerKey } from './bot.mjs'
-import { formatLookupDraft, isLookupFiller } from './bot-lookup.mjs'
+import { formatLookupDraft, isLookupFiller, needsLookup, runLookup } from './bot-lookup.mjs'
 
 const SUGGEST_TIMEOUT_MS = 40_000
 const AGENT_TIMEOUT_MS = 120_000
@@ -523,16 +523,30 @@ export function buildPrompt(messages, type, facts = '', continued = false) {
   return `${PROMPT}\n\n${scene}\n对话：\n${lines.join('\n') || '(空)'}\n${turnBlock(pending, facts)}\n\n请给出回复建议。`
 }
 
+const AGENT_TURN = `客户刚在即时消息里说了下面这些话。处理方式与工作台里新建对话后相同：需要查证、打开链接或检索时，必须先调用工具拿到结果，再写一条可以直接发给客户的回复。
+不要编造链接、数字或项目介绍。不要对客户说你在搜索或你是 AI，不要写「我去查一下」「我去找找」「请再描述一下」。`
+
 export function buildChatMessageParts(messages, type, continued = false) {
-  return [{ type: 'plain', text: buildPrompt(messages, type, '', continued) }]
+  const { pending } = splitTurn(messages)
+  const scene = type === 'group' ? '群聊' : '私聊'
+  const turn = pending.length ? pending.map(formatLine).join('\n') : '（无新消息）'
+  const head = continued
+    ? `这是同一场${scene}的下一轮。沿用已知上下文，不要重复已经说过的话。该用工具就用工具。`
+    : AGENT_TURN
+  return [{ type: 'plain', text: `${head}\n场景：${scene}。\n客户说：\n${turn}` }]
 }
 
 export function suggestSessionId(accountId, type, peerId) {
-  return `suggest:${accountId}:${type}:${peerId}`
+  return `suggest:${accountId}:${type}:${peerId}:task`
 }
 
 export function digestSessionId(accountId, type, peerId) {
-  return `${suggestSessionId(accountId, type, peerId)}:digest`
+  return `suggest:${accountId}:${type}:${peerId}:digest`
+}
+
+export function shouldFallbackLookup(turnText, stream) {
+  if (!needsLookup(turnText)) return false
+  return !(Array.isArray(stream?.tools) && stream.tools.length)
 }
 
 export const DIGEST_MAX_MESSAGES = 200
@@ -635,7 +649,7 @@ export function parseDigestPoints(text, messages = []) {
   return { lastMessageId: '', replies: [], summary, points }
 }
 
-export function createBotSuggest({ store, qq, astrbot, activity, history } = {}) {
+export function createBotSuggest({ store, qq, astrbot, activity, history, runLookup: runLookupImpl = runLookup } = {}) {
   const cache = new Map()
   const opened = new Set()
   const locks = new Map()
@@ -785,8 +799,37 @@ export function createBotSuggest({ store, qq, astrbot, activity, history } = {})
       const result = await astrbotJson('/api/v1/chat', { method: 'POST', body: payload, timeout: AGENT_TIMEOUT_MS })
       const stream = result.ok ? reduceChatStream(result.text) : { text: '', steps: [], tools: [] }
       for (const step of stream.steps) history?.addStep?.(turnId, step)
-      const parsed = result.ok ? draftsFromAgentRun(stream, lastMessageId) : emptySuggest(lastMessageId)
+      let parsed = result.ok ? draftsFromAgentRun(stream, lastMessageId) : emptySuggest(lastMessageId)
       if (result.ok) opened.add(sessionId)
+      const turn = pending.map((item) => item.text).join('\n')
+      let lookupExcerpt = stream.tools.map((item) => item.name).filter(Boolean).join('、')
+      if (shouldFallbackLookup(turn, stream, parsed)) {
+        let lookup = { needed: true, queries: [], searched: [], hits: [], facts: '' }
+        try { lookup = await runLookupImpl(turn) } catch (error) {
+          logError('bot-suggest', 'lookup', error)
+        }
+        lookupExcerpt = lookup.facts || lookupExcerpt
+        const queryText = (lookup.queries || []).join(' ')
+        history?.addStep?.(turnId, {
+          kind: 'query',
+          title: lookup.queries?.[0] ? `检索 ${lookup.queries[0]}` : '检索',
+          detail: queryText,
+        })
+        if (lookup.hits?.length) {
+          history?.addStep?.(turnId, {
+            kind: 'query',
+            title: `命中 ${lookup.hits.slice(0, 2).map((hit) => hit.name).filter(Boolean).join('、')}`,
+            detail: lookup.hits.map((hit) => hit.url).filter(Boolean).slice(0, 3).join('\n'),
+          })
+        } else {
+          history?.addStep?.(turnId, {
+            kind: 'query',
+            title: lookup.queries?.[0] ? `没查到 ${lookup.queries[0]}` : '没查到',
+            detail: queryText,
+          })
+        }
+        parsed = applyLookupToSuggest(parsed, lookup, lastMessageId)
+      }
       if (lastMessageId) {
         cache.set(cacheKey(accountId, type, peerId, lastMessageId), {
           at: Date.now(),
@@ -817,7 +860,7 @@ export function createBotSuggest({ store, qq, astrbot, activity, history } = {})
       history?.completeTurn?.(turnId, {
         replies: parsed.replies,
         summary: parsed.summary,
-        lookupExcerpt: stream.tools.map((item) => item.name).filter(Boolean).join('、'),
+        lookupExcerpt,
         skipped,
         steps,
       })

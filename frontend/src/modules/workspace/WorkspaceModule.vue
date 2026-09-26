@@ -126,6 +126,11 @@ function replaceWorkspaceRoute(target: WorkspaceRoute) {
 }
 
 function syncChrome() {
+  if (workspace.growthChatRequest) {
+    growthChatDismissed = false
+    workspace.growthChatRequest = false
+    workspace.mobilePane = 'chat'
+  }
   const next = resolveWorkspaceChrome({
     hasAccount: Boolean(shell.activeAccount),
     platform: shell.activeAccount?.platform,

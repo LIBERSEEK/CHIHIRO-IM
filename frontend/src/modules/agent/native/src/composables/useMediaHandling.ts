@@ -8,6 +8,8 @@ export interface StagedFileInfo {
     url: string;  // blob URL for preview
     type: string;  // image, record, file, video
     signature?: string;
+    sourceFile?: File;
+    libraryId?: string;
 }
 
 export function useMediaHandling() {
@@ -57,29 +59,50 @@ export function useMediaHandling() {
         if (isDuplicateFile(signature)) return undefined;
 
         pendingFileSignatures.add(signature);
+        const stagedFile: StagedFileInfo = {
+            attachment_id: '',
+            filename: file.name,
+            original_name: file.name,
+            url: URL.createObjectURL(file),
+            type: previewType(file),
+            signature,
+            sourceFile: file,
+        };
+        stagedFiles.value.push(stagedFile);
         const formData = new FormData();
         formData.append('file', file);
 
         try {
             const response = await fileApi.upload(formData);
-
             const { attachment_id, filename, type } = response.data.data;
-            const stagedFile = {
-                attachment_id,
-                filename,
-                original_name: file.name,
-                url: URL.createObjectURL(file),
-                type,
-                signature
-            };
-            stagedFiles.value.push(stagedFile);
+            stagedFile.attachment_id = attachment_id;
+            stagedFile.filename = filename;
+            if (type) stagedFile.type = type;
             return stagedFile;
         } catch (err) {
             console.error('Error uploading file:', err);
-            return undefined;
+            return stagedFile;
         } finally {
             pendingFileSignatures.delete(signature);
         }
+    }
+
+    function stageExternal(info: { url: string; name: string; type: string; libraryId?: string }) {
+        if (info.libraryId && stagedFiles.value.some(file => file.libraryId === info.libraryId)) return;
+        stagedFiles.value.push({
+            attachment_id: info.libraryId ? `library:${info.libraryId}` : '',
+            filename: info.name,
+            original_name: info.name,
+            url: info.url,
+            type: info.type,
+            libraryId: info.libraryId,
+        });
+    }
+
+    function unstageLibrary(id: string) {
+        const index = stagedFiles.value.findIndex(file => file.libraryId === id);
+        if (index < 0) return;
+        stagedFiles.value.splice(index, 1);
     }
 
     async function processAndUploadImage(file: File) {
@@ -168,6 +191,10 @@ export function useMediaHandling() {
         stagedFiles.value = [];
     }
 
+    function replaceStaged(files: StagedFileInfo[]) {
+        stagedFiles.value = files;
+    }
+
     function cleanupMediaCache() {
         Object.values(mediaCache.value).forEach(url => {
             if (url.startsWith('blob:')) {
@@ -178,8 +205,12 @@ export function useMediaHandling() {
     }
 
     // 计算属性：获取图片的 URL 列表（用于预览）
-    const stagedImagesUrl = computed(() => 
-        stagedFiles.value.filter(f => f.type === 'image').map(f => f.url)
+    const stagedImageFiles = computed(() =>
+        stagedFiles.value.filter(f => f.type === 'image')
+    );
+
+    const stagedImagesUrl = computed(() =>
+        stagedImageFiles.value.map(f => f.url)
     );
 
     const stagedAudioUrl = computed(() =>
@@ -193,17 +224,28 @@ export function useMediaHandling() {
 
     return {
         stagedImagesUrl,
+        stagedImageFiles,
         stagedAudioUrl,
         stagedFiles,
         stagedNonImageFiles,
         getMediaFile,
         processAndUploadImage,
         processAndUploadFile,
+        stageExternal,
+        unstageLibrary,
         handlePaste,
         removeImage,
         removeAudio,
         removeFile,
         clearStaged,
+        replaceStaged,
         cleanupMediaCache
     };
+}
+
+function previewType(file: File) {
+    if (file.type.startsWith('image/')) return 'image';
+    if (file.type.startsWith('audio/')) return 'record';
+    if (file.type.startsWith('video/')) return 'video';
+    return 'file';
 }

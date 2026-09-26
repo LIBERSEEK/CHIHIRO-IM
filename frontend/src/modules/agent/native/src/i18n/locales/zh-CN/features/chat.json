@@ -74,7 +74,11 @@
     "placeholder": "继续追问这段内容..."
   },
   "conversation": {
-    "title": "对话",
+    "title": "最近",
+    "more": "更多",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "archive": "归档",
     "newConversation": "新的聊天",
     "noHistory": "暂无对话历史",
     "systemStatus": "系统状态",

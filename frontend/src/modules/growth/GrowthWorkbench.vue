@@ -71,6 +71,17 @@ const onlyActive = ref(false)
 const blockKeywords = ref<string[]>([])
 const authorBlockKeywords = ref<string[]>([])
 const ruleGroups = ref<GrowthRuleGroup[]>([newRuleGroup('默认规则组')])
+const campaignSettings = ref<GrowthSettings['campaign']>(null)
+const loadedRules = ref('')
+
+function rulesSignature(groups: GrowthRuleGroup[]) {
+  return JSON.stringify(groups.map(group => ({
+    id: group.id,
+    rules: group.rules,
+    commentImagePath: group.commentImagePath || '',
+    commentSource: group.commentSource || '',
+  })))
+}
 const expanded = ref<Set<string>>(new Set())
 const selectedTaskId = ref('')
 const pendingTaskId = ref('')
@@ -191,6 +202,7 @@ function settingsFromForm(): GrowthSettings {
     authorBlockKeywords: authorBlockKeywords.value.map(item => item.trim()).filter(Boolean),
     ruleGroups: groups,
     presets: view.value?.settings.presets || [],
+    ...(campaignSettings.value ? { campaign: campaignSettings.value } : {}),
   }
 }
 
@@ -220,12 +232,14 @@ function applyView(next: GrowthAccountView) {
   ruleGroups.value = next.settings.ruleGroups.length
     ? next.settings.ruleGroups
     : [newRuleGroup('默认规则组')]
+  campaignSettings.value = next.settings.campaign ?? null
+  loadedRules.value = rulesSignature(ruleGroups.value)
   expandParents(ruleGroups.value)
 }
 
-async function load() {
+async function load(silent = false) {
   if (!accountId.value) return
-  loading.value = true
+  if (!silent) loading.value = true
   error.value = ''
   try {
     applyView(await fetchGrowthAccount(accountId.value))
@@ -760,6 +774,11 @@ watch(accountId, () => {
 watch([videoFilter, selectedTaskId], () => { videoPage.value = 1 })
 watch(() => task.value.running, (running, wasRunning) => {
   if (wasRunning && !running) void load()
+})
+watch(() => `${task.value.running}:${task.value.scanned}:${task.value.commented}`, () => {
+  if (props.surface !== 'task' || !task.value.running || modal.value) return
+  if (rulesSignature(ruleGroups.value) !== loadedRules.value) return
+  void load(true)
 })
 watch(() => shell.browserPath, (value) => {
   if (value && value !== chromeDraft.value) chromeDraft.value = value

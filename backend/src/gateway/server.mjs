@@ -9,7 +9,7 @@ import { createRuntime } from '../runtime/api.mjs'
 import { liveNapcatSecrets } from '../runtime/napcat-secrets.mjs'
 import { log, logError } from '../runtime/log.mjs'
 import { resolveNapcatProxy, resolveOnebotWsTarget } from './napcat-routing.mjs'
-import { ensureAstrbotReady } from './astrbot-proxy.mjs'
+import { ensureAstrbotReady, forwardAstrbotDashboard } from './astrbot-proxy.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '../../..')
@@ -231,7 +231,7 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (routedPath.startsWith('/api/') && routedPath !== '/api/status') {
+  if (routedPath.startsWith('/api/') && routedPath !== '/api/status' && routedPath !== '/api/ready') {
     const napcat = resolveNapcat(instanceId, { preferReady: false })
     if (!napcat?.webui) {
       res.writeHead(503, { 'Content-Type': 'application/json' })
@@ -250,6 +250,18 @@ const server = http.createServer(async (req, res) => {
       service: 'chihiro',
       gateway: { host, port },
       runtime: snap
+    }, null, 2))
+    return
+  }
+
+  if (url.pathname === '/api/ready') {
+    const environment = runtime.environment.diagnose()
+    const ready = environment.capabilities.gateway.ready
+    res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({
+      service: 'chihiro',
+      ready,
+      environment
     }, null, 2))
     return
   }
@@ -334,8 +346,8 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/astrbot' || url.pathname.startsWith('/astrbot/')) {
     if (!await ensureAstrbotReady({ astrbot: runtime.astrbot, res })) return
-    req.url = (url.pathname.replace(/^\/astrbot/, '') || '/') + url.search
-    proxy.web(req, res, { target: astrbotTarget() })
+    req.url = url.pathname + url.search
+    await forwardAstrbotDashboard(req, res, astrbotTarget())
     return
   }
 

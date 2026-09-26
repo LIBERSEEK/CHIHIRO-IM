@@ -65,9 +65,13 @@ git clone https://github.com/LIBERSEEK/CHIHIRO.git
 cd CHIHIRO
 git submodule update --init vendor/napcat vendor/astrbot
 npm install
-npm run build:web
+npm run setup
 npm run dev
 ```
+
+`npm run setup` 会完成首次环境检测与项目自有依赖修复，包括固定版本、校验过的 NapCat、
+隔离的 AstrBot Python 环境和前端构建。`npm run doctor` 只检查不修改，`npm run repair`
+可随时重复执行。QQ 未安装等必须人工处理的事项会单独列出。
 
 浏览器打开 [http://127.0.0.1:3100/](http://127.0.0.1:3100/)
 
@@ -80,11 +84,8 @@ npm run dev
 
 Docker：见 [deploy/README.md](deploy/README.md)。标准 Compose 起千寻 + AstrBot；Mac 上 QQ 仍用外部 NapCat。
 
-若工作台拉不起 QQ，可手动启动后刷新，Runtime 会探测已有登录态（不推荐作为日常路径）：
-
-```bash
-'/Applications/QQ.app/Contents/MacOS/QQ' --no-sandbox
-```
+若 QQ 或 Agent 无法启动，先运行 `npm run doctor`，再运行 `npm run repair`。Agent 错误页也会
+展示同一份检测结果并提供「自动修复」。不要手动用 `--no-sandbox` 启动官方 QQ。
 
 ## 入口
 
@@ -98,6 +99,7 @@ Docker：见 [deploy/README.md](deploy/README.md)。标准 Compose 起千寻 + A
 | `/astrbot`                      | AstrBot Dashboard |
 | `/mcp`                          | 给 Agent 的操作说明     |
 | `/api/status`                   | 存活检查              |
+| `/api/ready`                    | 环境就绪检查            |
 
 
 ## 如何开发

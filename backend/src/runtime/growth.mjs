@@ -10,6 +10,7 @@ import {
 import { DEFAULT_GROWTH_SETTINGS, normalizeGrowthSettings } from './growth-settings.mjs'
 import { extractDouyinProfile, localStorageFromStorageState, presentDouyinIdentity } from './growth-profile.mjs'
 import { runDouyinFeedTask } from './douyin-feed.mjs'
+import { commentPrompt, commentSessionId } from './growth-brief.mjs'
 import { createGrowthPreview } from './growth-preview.mjs'
 
 const LOGIN_WAIT_MS = 3 * 60 * 1000
@@ -21,6 +22,7 @@ export function createGrowthRuntime({
   emit = () => {},
   loginWaiter,
   feedRunner,
+  complete = async () => '',
 } = {}) {
   const dataDir = path.join(root, 'data', 'growth')
   const browserFile = path.join(dataDir, 'browser.json')
@@ -52,6 +54,11 @@ export function createGrowthRuntime({
 
   function accountDir(id) {
     return path.join(dataDir, 'accounts', id.replace(':', '_'))
+  }
+
+  function commentImageDirectory(accountId, briefId) {
+    const safe = String(briefId || 'brief').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40) || 'brief'
+    return path.join(accountDir(accountId), 'comment-images', safe)
   }
 
   function storagePath(id) {
@@ -408,6 +415,16 @@ export function createGrowthRuntime({
         }
         writeHistory(accountId, current)
       },
+      onSettings: (next) => {
+        writeSettings(accountId, next)
+        notify()
+      },
+      writeComment: async (current, video) => {
+        return complete(commentPrompt(current.campaign, video), commentSessionId(current.campaign?.briefId, video), {
+          provider: current.campaign?.commentProvider || '',
+          model: current.campaign?.commentModel || '',
+        })
+      },
       onComment: (row) => {
         task.commented += 1
         task.scanned += 1
@@ -617,6 +634,7 @@ export function createGrowthRuntime({
     previewFrame: preview.frame,
     setPreviewMode,
     hasStorage,
+    commentImageDirectory,
     deleteTaskHistory,
     clearTaskHistory,
     saveCommentImages,

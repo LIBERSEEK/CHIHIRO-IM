@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import { learnMatchedVideo, parseModelCommentResult, peerCommentLines } from './growth-brief.mjs'
 
 function randomBetween(min, max) {
   return min + Math.floor(Math.random() * Math.max(1, max - min + 1))
@@ -19,6 +20,12 @@ function videoRecord(video, extra = {}) {
     tags: (video?.video_tag || []).map((tag) => String(tag?.tag_name || '').trim()).filter(Boolean),
     ...extra,
   }
+}
+
+function videoTopics(desc) {
+  return [...String(desc || '').matchAll(/#([^\s#]+)/g)]
+    .map((match) => match[1].replace(/[，。！？、,.!?]+$/g, '').trim())
+    .filter(Boolean)
 }
 
 function cacheFeedItem(item) {
@@ -40,12 +47,22 @@ function cacheFeedItem(item) {
   }
 }
 
+function fold(value) {
+  return String(value || '').toLowerCase()
+}
+
+function includesFold(haystack, needle) {
+  const word = fold(needle).trim()
+  return Boolean(word) && fold(haystack).includes(word)
+}
+
 function matchRule(rule, video) {
-  if (!rule || !rule.keyword) return false
-  if (rule.field === 'nickName') return String(video?.author?.nickname || '').includes(rule.keyword)
-  if (rule.field === 'videoDesc') return String(video?.desc || '').includes(rule.keyword)
+  const keyword = String(rule?.keyword || '').trim()
+  if (!keyword) return false
+  if (rule.field === 'nickName') return includesFold(video?.author?.nickname, keyword)
+  if (rule.field === 'videoDesc') return includesFold(video?.desc, keyword)
   if (rule.field === 'videoTag') {
-    return (video?.video_tag || []).some((tag) => String(tag?.tag_name || '').includes(rule.keyword))
+    return (video?.video_tag || []).some((tag) => includesFold(tag?.tag_name, keyword))
   }
   return false
 }
@@ -60,7 +77,12 @@ export function matchRuleGroup(group, video, onLog = () => {}) {
   if (group.type === 'manual' && Array.isArray(group.rules) && group.rules.length > 0) {
     const matches = group.rules.map((rule) => matchRule(rule, video))
     currentMatched = group.relation === 'and' ? matches.every(Boolean) : matches.some(Boolean)
-    if (currentMatched) onLog('success', `手动规则组 "${group.name}" 匹配成功`)
+    if (currentMatched) {
+      const matchedRules = group.rules
+        .filter((rule, index) => matches[index])
+        .map((rule) => `${rule.field}:${rule.keyword}`)
+      onLog('success', `手动规则组 "${group.name}" 匹配成功，命中条件: ${matchedRules.join('、')}`)
+    }
   }
   if (!currentMatched) return null
   if (Array.isArray(group.children) && group.children.length) {
@@ -121,22 +143,22 @@ function commentTextsFromGroup(group) {
   return (group?.comments || group?.commentTexts || []).map((item) => String(item || '').trim()).filter(Boolean)
 }
 
-function selectImagePath(group) {
-  const paths = listCommentImages(group?.commentImagePath, group?.commentImageType)
-  return paths.length ? pick(paths) : ''
+function selectImagePaths(group) {
+  const images = listCommentImages(group?.commentImagePath, group?.commentImageType)
+  return images.length ? [pick(images)] : []
 }
 
 function blockHit(settings, video) {
   const desc = video.desc || ''
   const nickname = video.author?.nickname || ''
-  const hitBlock = (settings.blockKeywords || []).some((keyword) => desc.includes(keyword))
-  const hitAuthor = (settings.authorBlockKeywords || []).some((keyword) => nickname.includes(keyword))
+  const hitBlock = (settings.blockKeywords || []).some((keyword) => includesFold(desc, keyword))
+  const hitAuthor = (settings.authorBlockKeywords || []).some((keyword) => includesFold(nickname, keyword))
   if (!hitBlock && !hitAuthor) return ''
   if (hitBlock) {
-    const words = (settings.blockKeywords || []).filter((keyword) => desc.includes(keyword)).join(',')
+    const words = (settings.blockKeywords || []).filter((keyword) => includesFold(desc, keyword)).join(',')
     return `视频描述命中屏蔽关键词，跳过该视频。屏蔽关键词: ${words} 视频描述: ${desc}`
   }
-  const words = (settings.authorBlockKeywords || []).filter((keyword) => nickname.includes(keyword)).join(',')
+  const words = (settings.authorBlockKeywords || []).filter((keyword) => includesFold(nickname, keyword)).join(',')
   return `视频作者命中屏蔽关键词，跳过该视频。屏蔽关键词: ${words} 视频作者: ${nickname}`
 }
 
@@ -158,6 +180,8 @@ export async function runDouyinFeedTask({
   onVideo = () => {},
   onComment = () => {},
   onReady = () => {},
+  onSettings = () => {},
+  writeComment,
 }) {
   if (!executablePath) throw new Error('未设置 Chrome 路径')
   settings = { ...settings, shouldStop, shouldPause }
@@ -222,8 +246,9 @@ export async function runDouyinFeedTask({
       }
       onLog('info', `视频作者: @${video.author.nickname} (ID: ${video.author.uid})`)
       onLog('info', `视频描述: ${video.desc}`)
-      if (video.video_tag.length) onLog('info', `视频标签: ${JSON.stringify(video.video_tag)}`)
-      else onLog('info', '暂无视频标签')
+      const topics = videoTopics(video.desc)
+      onLog('info', `视频话题: ${topics.length ? topics.join('、') : '无'}`)
+      onLog('info', `平台分类标签: ${video.video_tag.length ? JSON.stringify(video.video_tag) : '无'}`)
 
       const blocked = blockHit(settings, video)
       if (blocked) {
@@ -244,24 +269,61 @@ export async function runDouyinFeedTask({
         continue
       }
 
+      const learning = learnMatchedVideo(settings, video)
+      if (learning.candidates.length || learning.promoted.length) {
+        settings = learning.settings
+        onSettings(settings)
+        for (const candidate of learning.candidates) {
+          onLog('info', `学习候选条件：${candidate.keyword}（${candidate.count}/3 个命中视频）`)
+        }
+        for (const keyword of learning.promoted) {
+          onLog('success', `新增公共命中条件：${keyword}（已在 3 个命中视频中出现）`)
+        }
+      }
+
       onLog('info', '视频需要评论')
       let watchMs = 0
-      if (analysis.shouldSimulateWatch) {
+      const watchPromise = (async () => {
+        if (!analysis.shouldSimulateWatch) return
         watchMs = watchMsFromSettings(settings)
         onLog('info', `先模拟观看 ${Math.round(watchMs / 1000)} 秒`)
         await waitMs(settings, watchMs)
+      })()
+      const campaignComment = Boolean(settings.campaign?.enabled && typeof writeComment === 'function')
+      const listPromise = (campaignComment || settings.onlyCommentActiveVideo)
+        ? readCommentList(page, settings, onLog)
+        : null
+      let heard = null
+      try {
+        const [list] = await Promise.all([listPromise || Promise.resolve(null), watchPromise])
+        heard = list
+      } catch (error) {
+        await listPromise?.catch(() => {})
+        throw error
       }
       if (shouldStop()) throw new Error('Task stopped')
 
       let shouldComment = true
-      if (settings.onlyCommentActiveVideo) {
-        onLog('info', '打开评论区并监听评论接口')
-        const activity = await openCommentSectionAndMonitor(page, settings, onLog)
-        onLog('info', `视频活跃度判断结果: ${activity.activityInfo}`)
-        onLog('info', activity.activityInfo)
-        shouldComment = activity.shouldComment
+      let peerComments = []
+      if (listPromise) {
+        peerComments = peerCommentLines(heard?.body)
+        if (settings.onlyCommentActiveVideo) {
+          const activity = activityFromList(heard)
+          if (heard?.body) onLog('info', `视频活跃度检查结果: ${activity.activityInfo}`)
+          onLog('info', `视频活跃度判断结果: ${activity.activityInfo}`)
+          onLog('info', activity.activityInfo)
+          shouldComment = activity.shouldComment
+        }
+        if (campaignComment) onLog('info', peerComments.length ? `评论区语气样本：${peerComments.length} 条` : '评论区没有可参考的语气')
       } else {
         onLog('info', '跳过活跃度检查，直接评论')
+      }
+
+      let commentPromise = null
+      if (shouldComment && campaignComment) {
+        commentPromise = Promise.resolve()
+          .then(() => writeComment(settings, { ...video, peerComments }))
+          .catch((error) => ({ __commentError: error }))
       }
       onLog('info', '浏览评论区2-4秒')
       await waitMs(settings, randomBetween(2000, 4000))
@@ -271,18 +333,50 @@ export async function runDouyinFeedTask({
         onVideo(videoRecord(video, { status: 'skipped', reason: '视频活跃度不符合标准', watchDuration: watchMs }))
         await closeCommentSection(page, settings)
       } else {
-        const texts = commentTextsFromGroup(analysis.matchedRuleGroup)
-        const text = texts.length ? pick(texts) : ''
-        const imagePath = selectImagePath(analysis.matchedRuleGroup)
-        if (!text && !imagePath) {
+        let text = ''
+        let commentReason = 'empty_response'
+        let imagePaths = []
+        if (settings.campaign?.enabled) {
+          try {
+            const raw = commentPromise ? await commentPromise : ''
+            if (raw && typeof raw === 'object' && raw.__commentError) throw raw.__commentError
+            const parsed = parseModelCommentResult(raw, settings.campaign?.excludes)
+            text = parsed.text
+            commentReason = parsed.reason
+          } catch {
+            text = ''
+            commentReason = 'model_error'
+          }
+          imagePaths = settings.campaign.form === 'image' ? selectImagePaths(analysis.matchedRuleGroup) : []
+          if (text && settings.campaign.interaction === 'comment_like') await tryLike(page, onLog)
+        } else {
+          const texts = commentTextsFromGroup(analysis.matchedRuleGroup)
+          text = texts.length ? pick(texts) : ''
+          imagePaths = selectImagePaths(analysis.matchedRuleGroup)
+        }
+        if (settings.campaign?.enabled && !text) {
+          const reason = {
+            empty_response: '模型返回为空',
+            invalid_json: '模型返回格式无法解析',
+            missing_comment: '模型未提供评论正文',
+            too_long: '模型评论超过 50 字',
+            invalid_comment: '模型评论格式无效',
+            refusal: '模型拒绝生成评论',
+            excluded_word: '模型评论命中排除词',
+            model_error: '模型调用失败',
+          }[commentReason] || '模型未生成评论'
+          onLog('warn', `评论跳过：${reason}`)
+          onVideo(videoRecord(video, { status: 'skipped', reason: `模型未生成评论：${reason}`, watchDuration: watchMs }))
+          await closeCommentSection(page, settings)
+        } else if (!text && !imagePaths.length) {
           onLog('error', '评论发送失败，尝试通过点击按钮关闭评论区')
           onVideo(videoRecord(video, { status: 'skipped', reason: '未配置评论文案，请在规则组中配置评论内容', watchDuration: watchMs }))
           await closeCommentSection(page, settings)
         } else {
-          onLog('info', `随机选择评论内容: ${text}`)
+          onLog('info', settings.campaign?.enabled ? `评论：${text}` : `随机选择评论内容: ${text}`)
           onLog('info', '尝试发布评论')
-          const posted = await postComment(page, text, settings, imagePath)
-          if (posted) {
+          const posted = await postComment(page, text, settings, imagePaths)
+          if (posted.ok) {
             commented += 1
             onComment(videoRecord(video, { text, status: 'commented', watchDuration: watchMs }))
             onLog('success', `评论发送成功，已评论次数：${commented}/${maxCount}`)
@@ -294,8 +388,8 @@ export async function runDouyinFeedTask({
               break
             }
           } else {
-            onLog('error', '评论发送失败，尝试通过点击按钮关闭评论区')
-            onVideo(videoRecord(video, { status: 'skipped', reason: '未找到评论输入框容器', watchDuration: watchMs }))
+            onLog('error', `评论发送失败：${posted.reason}，尝试通过点击按钮关闭评论区`)
+            onVideo(videoRecord(video, { status: 'skipped', reason: `评论发送失败：${posted.reason}`, watchDuration: watchMs }))
             await closeCommentSection(page, settings)
           }
         }
@@ -338,43 +432,54 @@ async function getCurrentVideoInfo(page, cache, onLog) {
   }
 }
 
-async function openCommentSectionAndMonitor(page, settings, onLog) {
-  try {
-    const result = new Promise((resolve) => {
-      const onResponse = async (response) => {
-        const url = response.url()
-        if (!url.includes('https://www.douyin.com/aweme/v1/web/comment/list/')) return
-        onLog('info', '捕获到评论列表接口请求')
-        try {
-          const body = await response.json().catch(() => null)
-          page.removeListener?.('response', onResponse)
-          clearTimeout(timer)
-          if (!body) {
-            resolve({ shouldComment: false, activityInfo: '无法解析评论数据' })
-            return
-          }
-          const activity = checkVideoActivity(body)
-          onLog('info', `视频活跃度检查结果: ${activity.reason}`)
-          resolve({ shouldComment: activity.isActive, activityInfo: activity.reason })
-        } catch {
-          page.removeListener?.('response', onResponse)
-          clearTimeout(timer)
-          resolve({ shouldComment: false, activityInfo: '解析评论数据出错' })
-        }
+function activityFromList(heard) {
+  if (!heard?.body) {
+    if (heard?.timedOut) return { shouldComment: false, activityInfo: '监听超时，未捕获到评论数据' }
+    if (heard?.failed) return { shouldComment: false, activityInfo: '解析评论数据出错' }
+    return { shouldComment: false, activityInfo: '无法解析评论数据' }
+  }
+  const activity = checkVideoActivity(heard.body)
+  return { shouldComment: activity.isActive, activityInfo: activity.reason }
+}
+
+function listenForCommentList(page, settings, onLog) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      page.removeListener?.('response', onResponse)
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const onResponse = async (response) => {
+      const url = typeof response.url === 'function' ? response.url() : ''
+      if (!url.includes('https://www.douyin.com/aweme/v1/web/comment/list/')) return
+      onLog('info', '捕获到评论列表接口请求')
+      try {
+        const body = await response.json().catch(() => null)
+        finish(body ? { body } : { body: null, failed: true })
+      } catch {
+        finish({ body: null, failed: true })
       }
-      page.on('response', onResponse)
-      const timer = setTimeout(() => {
-        page.removeListener?.('response', onResponse)
-        onLog('warn', '评论数据监听超时，未捕获到数据')
-        resolve({ shouldComment: false, activityInfo: '监听超时，未捕获到评论数据' })
-      }, settings?.fast ? 20 : 10000)
-    })
+    }
+    page.on('response', onResponse)
+    const timer = setTimeout(() => {
+      onLog('warn', '评论数据监听超时，未捕获到数据')
+      finish({ body: null, timedOut: true })
+    }, settings?.fast ? 20 : 10000)
+  })
+}
+
+async function readCommentList(page, settings, onLog) {
+  try {
+    const pending = listenForCommentList(page, settings, onLog)
     onLog('info', '使用快捷键X打开评论区')
     await openCommentSection(page, settings)
-    return await result
+    return await pending
   } catch (error) {
     onLog('error', `打开评论区并监听数据时出错: ${error}`)
-    return { shouldComment: false, activityInfo: '打开评论区出错' }
+    return { body: null, failed: true }
   }
 }
 
@@ -418,11 +523,15 @@ async function goToNextVideo(page, settings = {}) {
   await waitMs(settings, randomBetween(800, 1600))
 }
 
-async function postComment(page, text, settings = {}, imagePath = '') {
+async function postComment(page, text, settings = {}, imagePaths = []) {
   try {
     await openCommentSection(page, settings)
     const container = firstLocator(page, '.comment-input-inner-container')
-    await container.waitFor({ state: 'visible', timeout: 5000 })
+    try {
+      await container.waitFor({ state: 'visible', timeout: 5000 })
+    } catch {
+      return { ok: false, reason: '评论输入框不可见' }
+    }
     await container.click()
     await waitMs(settings, 1000)
     if (text) {
@@ -435,22 +544,50 @@ async function postComment(page, text, settings = {}, imagePath = '') {
       }
     }
     await waitMs(settings, randomBetween(400, 900))
-    if (imagePath && fs.existsSync(imagePath)) {
-      try {
-        const chooserPromise = page.waitForEvent('filechooser', { timeout: 5000 })
-        await firstLocator(page, '.commentInput-right-ct > div > span:nth-child(2)').click({ timeout: 5000 })
-        const chooser = await chooserPromise
-        await chooser.setFiles(imagePath)
-        await waitMs(settings, 2000)
-      } catch {
-        return false
+    const availableImages = imagePaths.filter((imagePath) => fs.existsSync(imagePath))
+    if (availableImages.length) {
+      for (const imagePath of availableImages) {
+        try {
+          const chooserPromise = page.waitForEvent('filechooser', { timeout: 5000 })
+          await firstLocator(page, '.commentInput-right-ct > div > span:nth-child(2)').click({ timeout: 5000 })
+          const chooser = await chooserPromise
+          await chooser.setFiles(imagePath)
+          await waitMs(settings, 1200)
+          continue
+        } catch {
+          // Some Douyin builds expose the file input without emitting filechooser.
+        }
+        try {
+          const input = firstLocator(page, 'input[type="file"]')
+          if (!await input.count() || typeof input.setInputFiles !== 'function') {
+            return { ok: false, reason: '图片上传控件未出现' }
+          }
+          await input.setInputFiles(imagePath)
+          await waitMs(settings, 1200)
+        } catch {
+          return { ok: false, reason: '图片上传失败' }
+        }
       }
     }
     await page.keyboard.press('Enter')
     await waitMs(settings, 800)
-    return true
+    return { ok: true, reason: '' }
+  } catch (error) {
+    return { ok: false, reason: error?.message ? `评论输入失败: ${error.message}` : '评论输入失败' }
+  }
+}
+
+async function tryLike(page, onLog) {
+  try {
+    const button = page.locator('[data-e2e="video-player-digg"]').first()
+    if (!await button.count()) {
+      onLog('warn', '没有点到赞，继续评论')
+      return
+    }
+    await button.click({ timeout: 2000 })
+    onLog('info', '已点赞')
   } catch {
-    return false
+    onLog('warn', '没有点到赞，继续评论')
   }
 }
 

@@ -74,7 +74,11 @@
     "placeholder": "Ask about this excerpt..."
   },
   "conversation": {
-    "title": "Conversations",
+    "title": "Recent",
+    "more": "More",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "archive": "Archive",
     "newConversation": "New Conversation",
     "noHistory": "No conversation history",
     "systemStatus": "System Status",

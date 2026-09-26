@@ -1,0 +1,22 @@
+{
+  "napcat": {
+    "version": "4.18.28",
+    "url": "https://github.com/NapNeko/NapCatQQ/releases/download/v4.18.28/NapCat.Shell.zip",
+    "sha256": "bcdd8bdb9e44bd0cf6a90908e572141787fd9e98cb8d8eecc5adf25bbdcabb94",
+    "archive": "zip"
+  },
+  "uv": {
+    "version": "0.12.17",
+    "darwin-arm64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.17/uv-aarch64-apple-darwin.tar.gz",
+      "sha256": "85f00cbdc6dd3e97eba4c31b4d014375a9fdfe8f570023b84e5102fc3456896b",
+      "archive": "tar.gz"
+    },
+    "darwin-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.12.17/uv-x86_64-apple-darwin.tar.gz",
+      "sha256": "8dcf05a8c809bb3c471d2b614788ba27a6e41298fc8c31ac84b5f4339fd468e5",
+      "archive": "tar.gz"
+    }
+  },
+  "python": "3.12"
+}

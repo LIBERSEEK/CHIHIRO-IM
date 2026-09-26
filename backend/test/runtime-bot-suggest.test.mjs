@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import test from 'node:test'
 import { createRuntime } from '../src/runtime/api.mjs'
 import { createBotController, normalizeBotSession } from '../src/runtime/bot.mjs'
-import { parseSuggestReplies, parseSuggestRead, collectSsePlain, pickAutoText, shouldHoldRead, applyLookupToSuggest, reduceChatStream, draftsFromAgentRun, buildChatRequestFlags, buildChatMessageParts, buildPrompt, suggestSessionId, parseDigestPoints, buildDigestPrompt, digestSessionId, clipDigestMessages, DIGEST_MAX_MESSAGES } from '../src/runtime/bot-suggest.mjs'
+import { parseSuggestReplies, parseSuggestRead, collectSsePlain, pickAutoText, shouldHoldRead, applyLookupToSuggest, reduceChatStream, draftsFromAgentRun, shouldFallbackLookup, buildChatRequestFlags, buildChatMessageParts, buildPrompt, suggestSessionId, parseDigestPoints, buildDigestPrompt, digestSessionId, clipDigestMessages, DIGEST_MAX_MESSAGES } from '../src/runtime/bot-suggest.mjs'
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -22,26 +22,31 @@ test('legacy boolean sessions normalize without enabling the adapter', () => {
 })
 
 test('one IM session maps to one ChatBot conversation id and incremental later turns', () => {
-  assert.equal(suggestSessionId('qq:10001', 'private', '20002'), 'suggest:qq:10001:private:20002')
-  const first = buildPrompt([{ role: 'them', text: '在吗', name: 'Raven' }], 'private')
-  assert.match(first, /当成一次说话来回/)
-  assert.match(first, /本轮待回/)
-  assert.match(first, /该用工具就用工具/)
-  assert.match(first, /找项目并解释/)
+  assert.equal(suggestSessionId('qq:10001', 'private', '20002'), 'suggest:qq:10001:private:20002:task')
+  const first = buildChatMessageParts([
+    { role: 'me', text: '上一句已经回复过' },
+    { role: 'them', text: '在吗', name: 'Raven' },
+  ], 'private')[0].text
+  assert.match(first, /必须先调用工具/)
+  assert.match(first, /客户说：/)
+  assert.match(first, /them\(Raven\): 在吗/)
   assert.match(first, /不要写「我去查一下」/)
-  assert.doesNotMatch(first, /没有依据时用自然追问/)
+  assert.doesNotMatch(first, /上一句已经回复过/)
+  assert.doesNotMatch(first, /只输出 JSON/)
+  assert.doesNotMatch(first, /"read":/)
+  assert.doesNotMatch(first, /查不到就直说没查到/)
   assert.deepEqual(buildChatRequestFlags(true), {
     enable_inline_genui: true,
     enable_default_system_prompt: true,
     enable_streaming: true,
   })
   assert.equal(buildChatMessageParts([{ role: 'them', text: '在吗', name: 'Raven' }], 'private')[0].type, 'plain')
-  const next = buildPrompt([{ role: 'them', text: '买吗', name: 'Raven' }], 'private', '', true)
-  assert.match(next, /这是同一场对话的下一轮/)
-  assert.match(next, /本轮待回/)
-  assert.match(next, /仍输出含 read 的 JSON/)
-  assert.doesNotMatch(next, /当成一次说话来回/)
-  assert.match(first, /"read":/)
+  const next = buildChatMessageParts([{ role: 'them', text: '买吗', name: 'Raven' }], 'private', true)[0].text
+  assert.match(next, /这是同一场私聊的下一轮/)
+  assert.match(next, /客户说：/)
+  assert.match(next, /该用工具就用工具/)
+  assert.doesNotMatch(next, /仍输出含 read 的 JSON/)
+  assert.match(buildPrompt([{ role: 'them', text: '在吗', name: 'Raven' }], 'private'), /当成一次说话来回/)
 })
 
 test('digest points keep only known message ids', () => {
@@ -219,7 +224,7 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.equal(f.astrbotRequests[0].auth, 'Bearer dash-token')
   const chatBody = JSON.parse(f.astrbotRequests[0].body)
   assert.equal(chatBody.username, 'chihiro-suggest:qq:10001')
-  assert.equal(chatBody.session_id, 'suggest:qq:10001:private:20002')
+  assert.equal(chatBody.session_id, 'suggest:qq:10001:private:20002:task')
   assert.equal(chatBody.enable_streaming, undefined)
   assert.deepEqual(chatBody.flags, {
     enable_inline_genui: true,
@@ -229,12 +234,11 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.equal(chatBody.config_id, undefined)
   assert.equal(chatBody.message[0].type, 'plain')
   assert.match(chatBody.message[0].text, /them\(Raven\): 在吗/)
-  assert.match(chatBody.message[0].text, /当成一次说话来回/)
-  assert.match(chatBody.message[0].text, /该用工具就用工具/)
-  assert.match(chatBody.message[0].text, /连续发言可能来自不同的人/)
-  assert.match(chatBody.message[0].text, /本轮待回/)
+  assert.match(chatBody.message[0].text, /必须先调用工具/)
+  assert.match(chatBody.message[0].text, /客户说：/)
+  assert.doesNotMatch(chatBody.message[0].text, /只输出 JSON/)
   assert.doesNotMatch(chatBody.message[0].text, /检索依据（内部/)
-  assert.doesNotMatch(chatBody.message[0].text, /这是同一场对话的下一轮/)
+  assert.doesNotMatch(chatBody.message[0].text, /这是同一场私聊的下一轮/)
 
   await fetch(`${f.base}/api/runtime/bot/session`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -246,9 +250,9 @@ test('auto suggest requires an enabled session; menu trigger does not', async (t
   assert.equal((await autoOn.json()).replies[0].text, '好的，我买')
   const autoChat = JSON.parse(f.astrbotRequests.at(-1).body)
   assert.equal(autoChat.config_id, 'sales')
-  assert.equal(autoChat.session_id, 'suggest:qq:10001:private:20002')
-  assert.match(autoChat.message[0].text, /这是同一场对话的下一轮/)
-  assert.doesNotMatch(autoChat.message[0].text, /当成一次说话来回/)
+  assert.equal(autoChat.session_id, 'suggest:qq:10001:private:20002:task')
+  assert.match(autoChat.message[0].text, /这是同一场私聊的下一轮/)
+  assert.doesNotMatch(autoChat.message[0].text, /只输出 JSON/)
 
   const history = await fetch(`${f.base}/api/runtime/bot/history?accountId=qq:10001&type=private&peerId=20002`)
   assert.equal(history.status, 200)
@@ -306,8 +310,8 @@ test('suggest failures return an empty list and configs proxy AstrBot', async (t
   })
   assert.equal(recovered.status, 200)
   const recoveredChat = JSON.parse(f.astrbotRequests.at(-1).body)
-  assert.match(recoveredChat.message[0].text, /当成一次说话来回/)
-  assert.doesNotMatch(recoveredChat.message[0].text, /这是同一场对话的下一轮/)
+  assert.match(recoveredChat.message[0].text, /必须先调用工具/)
+  assert.doesNotMatch(recoveredChat.message[0].text, /这是同一场私聊的下一轮/)
 
   f.setAstrbotPath('/api/v1/configs', {
     status: 200,
@@ -354,6 +358,36 @@ test('reduceChatStream keeps tool events out of the customer draft text', () => 
   assert.match(drafted.replies[0].text, /https:\/\/github.com\/acme\/codexhost/)
 })
 
+test('lookup turns without tools fall back instead of escalating empty', () => {
+  const parsed = draftsFromAgentRun({
+    text: JSON.stringify({
+      read: { intent: 'request', action: 'escalate', speakNow: { yes: 0.88, no: 0.12 }, urgency: 6, note: '无 CodexHost 信息, 转人工' },
+      replies: [],
+      summary: '',
+    }),
+    tools: [],
+    steps: [],
+  }, 'm1')
+  assert.equal(parsed.read.action.id, 'escalate')
+  assert.equal(shouldFallbackLookup('你去 github 上找下 codexhost 这个项目, 简单解释下', { tools: [] }, parsed), true)
+  assert.equal(shouldFallbackLookup('在吗', { tools: [] }, parsed), false)
+  assert.equal(shouldFallbackLookup('你去 github 上找下 codexhost', { tools: [{ name: 'web_search' }] }, parsed), false)
+  const missed = draftsFromAgentRun({
+    text: '今天美股的情况我这边没查到。这个项目我这边也没查到。',
+    tools: [],
+    steps: [],
+  }, 'm3')
+  assert.equal(shouldFallbackLookup('帮我查下今天美股的情况如何\nhttps://github.com/jev-chat/jev-chat-windows', { tools: [] }, missed), true)
+  const hit = applyLookupToSuggest(parsed, {
+    needed: true,
+    queries: ['codexhost'],
+    hits: [{ name: 'acme/codexhost', url: 'https://github.com/acme/codexhost', desc: 'hosted coding agent' }],
+    facts: 'repo acme/codexhost https://github.com/acme/codexhost',
+  }, 'm1')
+  assert.match(hit.replies[0].text, /acme\/codexhost/)
+  assert.equal(hit.read.action.id, 'brief')
+})
+
 test('agent prose without JSON becomes a single cited draft', () => {
   const drafted = draftsFromAgentRun({
     text: 'CodexHost 是托管编程助手：https://github.com/acme/codexhost',
@@ -390,7 +424,7 @@ test('ChatBot send uses the same ChatUI flags as a new workspace conversation an
   const chat = JSON.parse(f.astrbotRequests.at(-1).body)
   assert.deepEqual(chat.flags, buildChatRequestFlags(true))
   assert.equal(chat.message[0].type, 'plain')
-  assert.match(chat.message[0].text, /该用工具就用工具/)
+  assert.match(chat.message[0].text, /必须先调用工具/)
   const history = await fetch(`${f.base}/api/runtime/bot/history?accountId=qq:10001&type=private&peerId=20002`)
   const items = (await history.json()).items
   assert.ok(items[0].steps.some((step) => step.title === '调用 web_search'))

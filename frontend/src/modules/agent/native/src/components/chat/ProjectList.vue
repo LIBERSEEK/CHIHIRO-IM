@@ -1,20 +1,32 @@
 <template>
   <section class="sidebar-section project-list-shell">
     <div class="sidebar-section-header">
-      <span>{{ tm("project.title") }}</span>
-      <v-btn
-        icon
-        size="x-small"
-        variant="text"
-        class="section-action-btn"
-        :title="tm('project.create')"
-        @click="$emit('createProject')"
+      <button
+        type="button"
+        class="section-toggle"
+        :aria-expanded="sectionOpen"
+        @click="toggleSection"
       >
-        <Plus :size="18" />
-      </v-btn>
+        <span>{{ tm("project.title") }}</span>
+        <ChevronDown v-if="sectionOpen" :size="14" class="section-chevron" />
+        <ChevronRight v-else :size="14" class="section-chevron" />
+      </button>
+      <span class="section-header-actions" @click.stop>
+        <v-btn
+          icon
+          size="x-small"
+          variant="text"
+          class="section-action-btn"
+          :title="tm('project.create')"
+          :aria-label="tm('project.create')"
+          @click="$emit('createProject')"
+        >
+          <Plus :size="16" />
+        </v-btn>
+      </span>
     </div>
 
-    <div class="project-list-wrap">
+    <div v-show="sectionOpen" class="project-list-wrap">
       <div v-for="project in projects" :key="project.project_id">
         <div
           class="project-row project-item"
@@ -36,25 +48,51 @@
             <ChevronRight v-else :size="16" class="project-chevron" />
           </span>
           <span class="project-actions" @click.stop>
+            <StyledMenu location="bottom end" offset="6">
+              <template #activator="{ props: menuProps }">
+                <v-btn
+                  v-bind="menuProps"
+                  icon
+                  size="x-small"
+                  variant="text"
+                  class="project-action-btn"
+                  :title="tm('conversation.more')"
+                  :aria-label="tm('conversation.more')"
+                >
+                  <MoreHorizontal :size="15" />
+                </v-btn>
+              </template>
+              <v-list-item
+                class="styled-menu-item"
+                rounded="md"
+                @click="$emit('editProject', project)"
+              >
+                <template #prepend>
+                  <Settings :size="15" />
+                </template>
+                <v-list-item-title>{{ tm("project.edit") }}</v-list-item-title>
+              </v-list-item>
+              <v-list-item
+                class="styled-menu-item sidebar-more-delete"
+                rounded="md"
+                @click="handleDeleteProject(project)"
+              >
+                <template #prepend>
+                  <Trash2 :size="15" />
+                </template>
+                <v-list-item-title>{{ t("core.common.delete") }}</v-list-item-title>
+              </v-list-item>
+            </StyledMenu>
             <v-btn
               icon
               size="x-small"
               variant="text"
               class="project-action-btn"
-              :title="tm('project.edit')"
-              @click="$emit('editProject', project)"
+              :title="tm('actions.newChat')"
+              :aria-label="tm('actions.newChat')"
+              @click="$emit('startChat', project.project_id)"
             >
-              <Pencil :size="15" />
-            </v-btn>
-            <v-btn
-              icon
-              size="x-small"
-              variant="text"
-              class="project-action-btn"
-              :title="tm('actions.deleteChat')"
-              @click="handleDeleteProject(project)"
-            >
-              <Trash2 :size="15" />
+              <SquarePen :size="15" />
             </v-btn>
           </span>
         </div>
@@ -75,14 +113,33 @@
                 v-for="session in projectSessionList(project.project_id)"
                 :key="session.session_id"
                 class="project-session-row"
-                :class="{ active: activeSessionId === session.session_id }"
+                :class="{
+                  active: activeSessionId === session.session_id,
+                  'is-pinned': isPinned(session.session_id),
+                }"
                 role="button"
                 tabindex="0"
                 @click="$emit('selectSession', session.session_id)"
                 @keydown.enter="$emit('selectSession', session.session_id)"
                 @keydown.space.prevent="$emit('selectSession', session.session_id)"
               >
-                <span class="project-session-title">
+                <input
+                  v-if="renamingSessionId === session.session_id"
+                  ref="renameInput"
+                  v-model="renameDraft"
+                  class="session-title-input"
+                  :aria-label="tm('conversation.editDisplayName')"
+                  @click.stop
+                  @dblclick.stop
+                  @keydown.enter.stop.prevent="commitRename(session)"
+                  @keydown.esc.stop.prevent="cancelRename"
+                  @blur="commitRename(session)"
+                />
+                <span
+                  v-else
+                  class="project-session-title"
+                  @dblclick.stop="beginRename(session)"
+                >
                   {{ sessionTitle(session) }}
                 </span>
                 <span class="project-session-actions" @click.stop>
@@ -90,27 +147,27 @@
                     icon
                     size="x-small"
                     variant="text"
-                    class="project-action-btn"
-                    :title="tm('conversation.editDisplayName')"
-                    @click="
-                      $emit(
-                        'editSessionTitle',
-                        session.session_id,
-                        session.display_name || '',
-                      )
-                    "
+                    class="project-action-btn session-pin-btn"
+                    :title="pinLabel(session.session_id)"
+                    :aria-label="pinLabel(session.session_id)"
+                    :aria-pressed="isPinned(session.session_id)"
+                    @click="togglePin(session.session_id)"
                   >
-                    <Pencil :size="15" />
+                    <Pin
+                      :size="15"
+                      :fill="isPinned(session.session_id) ? 'currentColor' : 'none'"
+                    />
                   </v-btn>
                   <v-btn
                     icon
                     size="x-small"
                     variant="text"
-                    class="project-action-btn"
-                    :title="tm('actions.deleteChat')"
-                    @click="handleDeleteSession(project.project_id, session)"
+                    class="project-action-btn session-archive-btn"
+                    :title="tm('conversation.archive')"
+                    :aria-label="tm('conversation.archive')"
+                    @click="archiveSession(session.session_id)"
                   >
-                    <Trash2 :size="15" />
+                    <Archive :size="15" />
                   </v-btn>
                 </span>
                 <v-progress-circular
@@ -133,15 +190,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { nextTick, ref, watch } from "vue";
 import {
+  Archive,
   ChevronDown,
   ChevronRight,
-  Pencil,
+  MoreHorizontal,
+  Pin,
   Plus,
+  Settings,
+  SquarePen,
   Trash2,
 } from "@lucide/vue";
+import StyledMenu from "@/modules/agent/native/src/components/shared/StyledMenu.vue";
 import { useI18n, useModuleI18n } from "@/modules/agent/native/src/i18n/composables";
+import { useSidebarSessionFlags } from "@/modules/agent/native/src/use-sidebar-session-flags";
 import { askForConfirmation, useConfirmDialog } from "@/modules/agent/native/src/utils/confirmDialog";
 
 export interface Project {
@@ -168,12 +231,14 @@ interface Props {
   loadingProjectIds: string[];
   selectedProjectId?: string | null;
   activeSessionId?: string | null;
+  revealProjectId?: string | null;
   isSessionRunning?: (sessionId: string) => boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
   selectedProjectId: null,
   activeSessionId: null,
+  revealProjectId: null,
 });
 
 const emit = defineEmits<{
@@ -183,15 +248,39 @@ const emit = defineEmits<{
   deleteProject: [projectId: string];
   toggleProject: [projectId: string, expanded: boolean];
   selectSession: [sessionId: string];
-  editSessionTitle: [sessionId: string, title: string];
-  deleteSession: [sessionId: string, projectId: string];
+  startChat: [projectId: string];
+  renameSession: [sessionId: string, title: string];
 }>();
 
 const { t } = useI18n();
 const { tm } = useModuleI18n("features/chat");
 const confirmDialog = useConfirmDialog();
+const { togglePin, archiveSession, isPinned, arrange } = useSidebarSessionFlags();
+const renamingSessionId = ref("");
+const renameDraft = ref("");
+const renameInput = ref<HTMLInputElement | null>(null);
+let renameCanceled = false;
 
+const PROJECT_SECTION_KEY = "chihiro-sidebar-projects-open";
+const sectionOpen = ref(readSectionOpen(PROJECT_SECTION_KEY));
 const expandedProjectIds = ref<Set<string>>(readExpandedProjectIds());
+
+function readSectionOpen(key: string) {
+  try {
+    return localStorage.getItem(key) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function toggleSection() {
+  sectionOpen.value = !sectionOpen.value;
+  try {
+    localStorage.setItem(PROJECT_SECTION_KEY, sectionOpen.value ? "1" : "0");
+  } catch {
+    /* keep the in-memory choice when storage is unavailable */
+  }
+}
 
 watch(
   () => props.selectedProjectId,
@@ -199,6 +288,13 @@ watch(
     if (projectId) {
       setProjectExpanded(projectId, true);
     }
+  },
+);
+
+watch(
+  () => props.revealProjectId,
+  (projectId) => {
+    if (projectId) setProjectExpanded(projectId, true);
   },
 );
 
@@ -257,7 +353,38 @@ function handleProjectClick(project: Project) {
 }
 
 function projectSessionList(projectId: string) {
-  return props.projectSessions[projectId] || [];
+  return arrange(props.projectSessions[projectId] || []);
+}
+
+function pinLabel(sessionId: string) {
+  return isPinned(sessionId) ? tm("conversation.unpin") : tm("conversation.pin");
+}
+
+async function beginRename(session: ProjectSession) {
+  renameCanceled = false;
+  renamingSessionId.value = session.session_id;
+  renameDraft.value = session.display_name || "";
+  await nextTick();
+  const input = Array.isArray(renameInput.value) ? renameInput.value[0] : renameInput.value;
+  input?.focus();
+  input?.select();
+}
+
+function cancelRename() {
+  renameCanceled = true;
+  renamingSessionId.value = "";
+}
+
+function commitRename(session: ProjectSession) {
+  if (renameCanceled) {
+    renameCanceled = false;
+    return;
+  }
+  if (renamingSessionId.value !== session.session_id) return;
+  const title = renameDraft.value.trim();
+  renamingSessionId.value = "";
+  if ((session.display_name || "") === title) return;
+  emit("renameSession", session.session_id, title);
 }
 
 function sessionRunning(sessionId: string) {
@@ -275,15 +402,6 @@ async function handleDeleteProject(project: Project) {
   }
 }
 
-async function handleDeleteSession(projectId: string, session: ProjectSession) {
-  if (await askForConfirmation(tm("conversation.confirmDelete"), confirmDialog, {
-    title: tm("conversation.confirmDeleteTitle"),
-    confirmText: t("core.common.delete"),
-  })) {
-    emit("deleteSession", session.session_id, projectId);
-  }
-}
-
 </script>
 
 <style scoped>
@@ -292,14 +410,46 @@ async function handleDeleteSession(projectId: string, session: ProjectSession) {
 }
 
 .sidebar-section-header {
-  min-height: 24px;
+  min-height: 28px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 10px 4px;
+  gap: 8px;
+  padding: 0 4px 4px 10px;
   color: var(--chat-section-label);
   font-size: 12px;
   font-weight: 500;
+}
+
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.section-chevron {
+  flex: 0 0 auto;
+  color: var(--chat-muted);
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-section-header:hover .section-header-actions,
+.sidebar-section-header:focus-within .section-header-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .section-action-btn,
@@ -315,9 +465,24 @@ async function handleDeleteSession(projectId: string, session: ProjectSession) {
 }
 
 .section-action-btn {
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+}
+
+.sidebar-more-delete {
+  color: rgb(var(--v-theme-error));
+}
+
+@media (hover: none) {
+  .section-header-actions,
+  .project-actions,
+  .project-session-actions,
+  .session-archive-btn {
+    opacity: 1;
+    pointer-events: auto;
+    visibility: visible;
+  }
 }
 
 .section-action-btn:hover,
@@ -343,7 +508,7 @@ async function handleDeleteSession(projectId: string, session: ProjectSession) {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 56px 4px 10px;
+  padding: 4px 64px 4px 10px;
   position: relative;
   box-sizing: border-box;
   cursor: pointer;
@@ -415,10 +580,34 @@ async function handleDeleteSession(projectId: string, session: ProjectSession) {
 .project-row:hover .project-actions,
 .project-row:focus-within .project-actions,
 .project-session-row:hover .project-session-actions,
-.project-session-row:focus-within .project-session-actions {
+.project-session-row:focus-within .project-session-actions,
+.project-session-row.is-pinned .project-session-actions {
   opacity: 1;
   pointer-events: auto;
   visibility: visible;
+}
+
+.project-session-row.is-pinned:not(:hover):not(:focus-within) .project-session-actions {
+  pointer-events: none;
+}
+
+.project-session-row.is-pinned:not(:hover):not(:focus-within) .session-pin-btn {
+  pointer-events: auto;
+}
+
+.project-session-row.is-pinned:not(:hover):not(:focus-within) .session-archive-btn {
+  opacity: 0;
+}
+
+.session-title-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  outline: none;
 }
 
 .project-session-list {
@@ -450,7 +639,8 @@ async function handleDeleteSession(projectId: string, session: ProjectSession) {
 }
 
 .project-session-row:hover .project-session-progress,
-.project-session-row:focus-within .project-session-progress {
+.project-session-row:focus-within .project-session-progress,
+.project-session-row.is-pinned .project-session-progress {
   opacity: 0;
   visibility: hidden;
 }
@@ -459,5 +649,14 @@ async function handleDeleteSession(projectId: string, session: ProjectSession) {
   padding: 5px 10px;
   color: var(--chat-muted);
   font-size: 13px;
+}
+
+@media (hover: none) {
+  .project-session-row.is-pinned:not(:hover):not(:focus-within) .project-session-actions,
+  .project-session-row.is-pinned:not(:hover):not(:focus-within) .session-archive-btn {
+    opacity: 1;
+    pointer-events: auto;
+    visibility: visible;
+  }
 }
 </style>

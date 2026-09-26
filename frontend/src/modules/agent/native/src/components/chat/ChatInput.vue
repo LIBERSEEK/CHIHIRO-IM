@@ -3,6 +3,7 @@
     class="input-area fade-in"
     :class="{ 'is-dark': isDark }"
   >
+    <CampaignComposer part="panel" @files="emit('fileSelect', $event)" />
     <div
       class="input-container"
       :class="{
@@ -21,6 +22,7 @@
         transition: 'min-height 0.2s ease, padding 0.2s ease',
       }"
     >
+
       <!-- 引用预览区 -->
       <transition name="slideReply" @after-leave="handleReplyAfterLeave">
         <div class="reply-preview" v-if="props.replyTo && !isReplyClosing">
@@ -43,11 +45,12 @@
       <transition name="attachments">
         <div class="attachments-preview" v-if="hasStagedAttachments">
           <div
-            v-for="(img, index) in stagedImagesUrl"
-            :key="'img-' + index"
+            v-for="(file, index) in imageCards"
+            :key="'img-' + (file.libraryId || file.signature || index)"
             class="attachment-card image-preview"
+            @contextmenu.prevent="openLibraryMenu($event, file)"
           >
-            <img :src="img" class="preview-image" alt="attachment preview" />
+            <img :src="file.url" class="preview-image" alt="attachment preview" />
             <v-btn
               @click="$emit('removeImage', index)"
               class="remove-attachment-btn"
@@ -75,8 +78,9 @@
 
           <div
             v-for="(file, index) in stagedFiles"
-            :key="'file-' + index"
+            :key="'file-' + (file.libraryId || file.signature || index)"
             class="attachment-card file-preview"
+            @contextmenu.prevent="openLibraryMenu($event, file)"
           >
             <div
               class="attachment-icon"
@@ -113,7 +117,9 @@
         <div class="input-left-actions">
           <!-- Settings Menu -->
           <StyledMenu
-            offset="8"
+            v-model="composerMenu"
+            content-class="composer-plus-menu"
+            offset="12"
             location="top start"
             :close-on-content-click="false"
           >
@@ -126,21 +132,48 @@
               />
             </template>
 
-            <!-- Upload Files -->
             <v-list-item
-              class="styled-menu-item"
-              rounded="md"
-              @click="triggerImageInput"
+              class="styled-menu-item composer-plus-item"
+              rounded="lg"
+              @click="campaign.requestComputerPick(); composerMenu = false"
             >
               <template v-slot:prepend>
-                <v-icon icon="mdi-file-upload" size="small"></v-icon>
+                <v-icon icon="mdi-laptop" size="20"></v-icon>
               </template>
-              <v-list-item-title>
-                {{ tm("input.upload") }}
-              </v-list-item-title>
+              <v-list-item-title>从电脑添加</v-list-item-title>
+            </v-list-item>
+            <v-list-item
+              class="styled-menu-item composer-plus-item"
+              rounded="lg"
+              @click="campaign.openLibrary(); composerMenu = false"
+            >
+              <template v-slot:prepend>
+                <v-icon icon="mdi-folder-outline" size="20"></v-icon>
+              </template>
+              <v-list-item-title>从资料库添加</v-list-item-title>
+              <v-list-item-subtitle>留下的图片和视频，下次还能再选</v-list-item-subtitle>
             </v-list-item>
 
-            <!-- Config Selector in Menu -->
+            <v-divider class="composer-plus-divider" />
+
+            <v-list-item
+              class="styled-menu-item composer-plus-item"
+              :class="{ 'styled-menu-item-active': skillOn }"
+              rounded="lg"
+              @click="sessionSkills.toggle(sessionId || ''); composerMenu = false"
+            >
+              <template v-slot:prepend>
+                <v-icon icon="mdi-comment-text-outline" size="20"></v-icon>
+              </template>
+              <v-list-item-title>营销获客</v-list-item-title>
+              <v-list-item-subtitle>把这个技能挂到当前对话</v-list-item-subtitle>
+              <template v-if="skillOn" v-slot:append>
+                <v-icon icon="mdi-check" size="18" color="primary"></v-icon>
+              </template>
+            </v-list-item>
+
+            <v-divider class="composer-plus-divider" />
+
             <ConfigSelector
               :session-id="sessionId || null"
               :platform-id="sessionPlatformId"
@@ -149,14 +182,13 @@
               @config-changed="handleConfigChange"
             />
 
-            <!-- Streaming Toggle in Menu -->
             <v-list-item
-              class="styled-menu-item"
-              rounded="md"
+              class="styled-menu-item composer-plus-item"
+              rounded="lg"
               @click="$emit('toggleStreaming')"
             >
               <template v-slot:prepend>
-                <v-icon icon="mdi-lightning-bolt" size="small"></v-icon>
+                <v-icon icon="mdi-lightning-bolt" size="20"></v-icon>
               </template>
               <v-list-item-title>
                 {{
@@ -165,9 +197,20 @@
                     : tm("streaming.disabled")
                 }}
               </v-list-item-title>
+              <template v-slot:append>
+                <v-icon
+                  :icon="enableStreaming ? 'mdi-toggle-switch' : 'mdi-toggle-switch-off-outline'"
+                  :color="enableStreaming ? 'primary' : undefined"
+                  size="22"
+                  class="composer-plus-switch"
+                />
+              </template>
             </v-list-item>
           </StyledMenu>
-
+          <button v-if="skillOn" type="button" class="campaign-mode-chip">
+            营销获客
+            <span class="campaign-mode-close" role="button" aria-label="取消营销获客" @click="sessionSkills.toggle(sessionId || '')">×</span>
+          </button>
         </div>
         <div class="input-field-shell">
           <input
@@ -301,6 +344,7 @@
           />
         </div>
       </div>
+
     </div>
   </div>
 </template>
@@ -325,6 +369,9 @@ import ProviderModelMenu from "./ProviderModelMenu.vue";
 import StyledMenu from "@/modules/agent/native/src/components/shared/StyledMenu.vue";
 import CommandSuggestion from "./CommandSuggestion.vue";
 import { attachmentPresentation } from "./attachmentPresentation";
+import CampaignComposer from "@/modules/growth/CampaignComposer.vue";
+import { useGrowthCampaignStore } from "@/modules/growth/campaign-store";
+import { sessionSkills } from "@/modules/agent/session-skills";
 import type { Session } from "@/modules/agent/native/src/composables/useSessions";
 import type { SuggestionCommand } from "./CommandSuggestion.vue";
 
@@ -334,6 +381,9 @@ interface StagedFileInfo {
   original_name: string;
   url: string;
   type: string;
+  signature?: string;
+  sourceFile?: File;
+  libraryId?: string;
 }
 
 interface ReplyInfo {
@@ -351,6 +401,7 @@ interface TokenUsageInfo {
 interface Props {
   prompt: string;
   stagedImagesUrl: string[];
+  stagedImageFiles?: StagedFileInfo[];
   stagedAudioUrl: string;
   stagedFiles?: StagedFileInfo[];
   disabled: boolean;
@@ -371,6 +422,7 @@ const props = withDefaults(defineProps<Props>(), {
   sessionId: null,
   currentSession: null,
   configId: null,
+  stagedImageFiles: undefined,
   stagedFiles: () => [],
   replyTo: null,
   sendShortcut: "shift_enter",
@@ -390,11 +442,15 @@ const emit = defineEmits<{
   stopRecording: [];
   pasteImage: [event: ClipboardEvent];
   fileSelect: [files: FileList | File[]];
+  libraryMenu: [payload: { x: number; y: number; name: string; url: string; libraryId?: string; file?: File; stagedKey: string }];
   clearReply: [];
   openLiveMode: [];
 }>();
 
 const { tm } = useModuleI18n("features/chat");
+const campaign = useGrowthCampaignStore();
+const skillOn = computed(() => sessionSkills.active(props.sessionId || ""));
+const composerMenu = ref(false);
 const isDark = computed(
   () => useCustomizerStore().uiTheme === "PurpleThemeDark",
 );
@@ -564,6 +620,30 @@ const hasStagedAttachments = computed(() => {
     (props.stagedFiles && props.stagedFiles.length > 0)
   );
 });
+
+const imageCards = computed((): StagedFileInfo[] => {
+  if (props.stagedImageFiles) return props.stagedImageFiles;
+  return props.stagedImagesUrl.map((url) => ({
+    attachment_id: "",
+    filename: "",
+    original_name: "图片",
+    url,
+    type: "image",
+    signature: url,
+  }));
+});
+
+function openLibraryMenu(event: MouseEvent, file: StagedFileInfo) {
+  emit("libraryMenu", {
+    x: event.clientX,
+    y: event.clientY,
+    name: file.original_name || file.filename || "未命名",
+    url: file.url,
+    libraryId: file.libraryId,
+    file: file.sourceFile,
+    stagedKey: file.signature || file.libraryId || file.url,
+  });
+}
 
 function filePresentation(file: StagedFileInfo) {
   return attachmentPresentation(file);
@@ -1121,11 +1201,13 @@ defineExpose({
   border-radius: 34px !important;
 }
 
-.input-container.has-attachments {
+.input-container.has-attachments,
+.input-container.is-campaign {
   justify-content: flex-start;
   min-height: 130px;
   padding: 14px 18px 10px !important;
   border-radius: 30px !important;
+  overflow: visible;
 }
 
 .input-area.is-dark .input-container {
@@ -1150,12 +1232,58 @@ defineExpose({
   column-gap: 10px;
 }
 
-.input-container.is-multiline .composer-row {
+.input-container.is-multiline .composer-row,
+.input-container.is-campaign .composer-row {
   grid-template-areas:
     "field field field"
     "left . right";
   row-gap: 10px;
   align-items: end;
+}
+
+.input-container.is-campaign .composer-row {
+  align-items: center;
+}
+
+.input-container.is-campaign .input-field-shell,
+.input-container.is-campaign .chat-text-input,
+.input-container.is-campaign .chat-textarea {
+  min-height: 36px !important;
+}
+
+.campaign-mode-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 32px;
+  margin-left: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(var(--v-theme-on-surface), 0.12);
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.campaign-mode-close {
+  display: none;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  place-items: center;
+  border-radius: 50%;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.campaign-mode-chip:hover .campaign-mode-close,
+.campaign-mode-chip:focus-within .campaign-mode-close {
+  display: grid;
 }
 
 .input-field-shell {
@@ -1561,13 +1689,22 @@ defineExpose({
     align-items: center;
   }
 
-  .input-container.is-multiline .composer-row {
+  .input-container.is-multiline .composer-row,
+  .input-container.is-campaign .composer-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-areas:
       "field field field"
       "left . right";
     min-height: auto;
     row-gap: 4px;
+  }
+
+  .input-container.is-campaign .composer-row {
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+  }
+
+  .input-container.is-campaign .input-left-actions {
+    min-width: max-content;
   }
 
   .input-field-shell {
@@ -1682,5 +1819,107 @@ defineExpose({
     width: 54px;
     flex-basis: 54px;
   }
+}
+
+@media (max-width: 480px) {
+  .input-container.is-campaign {
+    min-width: 0 !important;
+    padding: 12px 10px 10px !important;
+    box-sizing: border-box !important;
+  }
+
+  .input-container.is-campaign .composer-row {
+    column-gap: 4px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .input-container.is-campaign .input-right-actions {
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .input-container.is-campaign .input-outline-control,
+  .input-container.is-campaign .input-icon-btn {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+  }
+
+  .input-container.is-campaign .input-action-btn {
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+  }
+}
+</style>
+
+<style>
+.v-overlay.v-menu .v-overlay__content.composer-plus-menu > .styled-menu-card {
+  min-width: 280px;
+  border-radius: 18px !important;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 84%, rgb(var(--v-theme-on-surface)) 16%) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12) !important;
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.48),
+    0 2px 8px rgba(0, 0, 0, 0.22) !important;
+}
+
+.composer-plus-menu .styled-menu-list {
+  padding: 8px !important;
+}
+
+.composer-plus-menu .styled-menu-item {
+  min-height: 44px;
+  margin: 1px 0;
+  border-radius: 12px !important;
+}
+
+.composer-plus-menu .styled-menu-item .v-list-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  opacity: 1;
+}
+
+.composer-plus-menu .styled-menu-item .v-list-item-subtitle {
+  margin-top: 1px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: rgb(var(--v-theme-on-surface)) !important;
+  opacity: 0.62;
+}
+
+.composer-plus-menu .styled-menu-item .v-icon:not(.text-primary) {
+  color: rgb(var(--v-theme-on-surface));
+  opacity: 0.9;
+}
+
+.composer-plus-menu .v-list-item__spacer {
+  width: 12px !important;
+}
+
+.composer-plus-menu .composer-plus-divider {
+  margin: 6px 10px;
+  opacity: 1;
+  border-color: rgba(var(--v-theme-on-surface), 0.12);
+}
+
+.composer-plus-menu .styled-menu-item:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+.v-theme--PurpleThemeDark .composer-plus-menu .styled-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.composer-plus-menu .styled-menu-item-active {
+  background: rgba(var(--v-theme-primary), 0.14) !important;
+}
+
+.composer-plus-menu .composer-plus-switch {
+  opacity: 0.95;
 }
 </style>

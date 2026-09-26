@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, reactive, ref, type Ref } from "vue";
 import { chatApi, fileApi } from "@/modules/agent/native/src/api/v1";
 import { fetchWithAuth } from "@/modules/agent/native/src/api/http";
+import { parseChihiroCard } from "@/modules/agent/schema-card";
 
 export type TransportMode = "sse" | "websocket";
 
@@ -101,6 +102,7 @@ interface ActiveConnection {
   deferredBeforeBot?: ChatRecord;
   followUpCaptured?: boolean;
   followUpTargetRunId?: string;
+  onComplete?: () => void;
 }
 
 interface SendMessageStreamOptions {
@@ -115,6 +117,9 @@ interface SendMessageStreamOptions {
   botRecord: ChatRecord;
   skipUserHistory?: boolean;
   llmCheckpointId?: string | null;
+  flags?: ReturnType<typeof buildChatRequestFlags>;
+  skillPrompt?: string;
+  onComplete?: () => void;
 }
 
 interface ContinueEditedMessageOptions {
@@ -380,6 +385,9 @@ export function useMessages(options: UseMessagesOptions) {
     userRecord,
     skipUserHistory = false,
     llmCheckpointId = null,
+    flags,
+    skillPrompt,
+    onComplete,
   }: SendMessageStreamOptions) {
     if (transport === "websocket") {
       startWebSocketStream(
@@ -391,6 +399,9 @@ export function useMessages(options: UseMessagesOptions) {
         enableStreaming,
         selectedProvider,
         selectedModel,
+        flags,
+        skillPrompt,
+        onComplete,
       );
       return;
     }
@@ -405,6 +416,9 @@ export function useMessages(options: UseMessagesOptions) {
       selectedModel,
       skipUserHistory,
       llmCheckpointId,
+      flags,
+      skillPrompt,
+      onComplete,
     );
   }
 
@@ -641,6 +655,9 @@ export function useMessages(options: UseMessagesOptions) {
     selectedModel: string,
     skipUserHistory = false,
     llmCheckpointId: string | null = null,
+    flags?: ReturnType<typeof buildChatRequestFlags>,
+    skillPrompt?: string,
+    onComplete?: () => void,
   ) {
     const abort = new AbortController();
     const connection: ActiveConnection = {
@@ -652,6 +669,7 @@ export function useMessages(options: UseMessagesOptions) {
       userRecord,
       botVisible: messagesBySession[sessionId]?.includes(botRecord) ?? false,
       deferredBeforeBot: deferredBotAnchors.get(botRecord),
+      onComplete,
     };
     activeConnections[messageId] = connection;
 
@@ -663,7 +681,8 @@ export function useMessages(options: UseMessagesOptions) {
       body: JSON.stringify({
         session_id: sessionId,
         message: parts.map(partToPayload),
-        flags: buildChatRequestFlags(enableStreaming),
+        flags: flags || buildChatRequestFlags(enableStreaming),
+        skill_prompt: skillPrompt || undefined,
         selected_provider: selectedProvider,
         selected_model: selectedModel,
         _skip_user_history: skipUserHistory,
@@ -688,7 +707,9 @@ export function useMessages(options: UseMessagesOptions) {
       })
       .finally(async () => {
         if (activeConnections[messageId]?.abort === abort) {
+          const done = activeConnections[messageId];
           delete activeConnections[messageId];
+          done?.onComplete?.();
           await options.onSessionsChanged?.();
         }
       });
@@ -790,6 +811,9 @@ export function useMessages(options: UseMessagesOptions) {
     enableStreaming: boolean,
     selectedProvider: string,
     selectedModel: string,
+    flags?: ReturnType<typeof buildChatRequestFlags>,
+    skillPrompt?: string,
+    onComplete?: () => void,
   ) {
     const ws = getOrCreateChatWebSocket(sessionId);
 
@@ -804,6 +828,7 @@ export function useMessages(options: UseMessagesOptions) {
       errorShown: false,
       botVisible: messagesBySession[sessionId]?.includes(botRecord) ?? false,
       deferredBeforeBot: deferredBotAnchors.get(botRecord),
+      onComplete,
     };
     activeConnections[messageId] = connection;
 
@@ -813,7 +838,8 @@ export function useMessages(options: UseMessagesOptions) {
       session_id: sessionId,
       message_id: messageId,
       message: parts.map(partToPayload),
-      flags: buildChatRequestFlags(enableStreaming),
+      flags: flags || buildChatRequestFlags(enableStreaming),
+      skill_prompt: skillPrompt || undefined,
       selected_provider: selectedProvider,
       selected_model: selectedModel,
     });
@@ -955,6 +981,7 @@ export function useMessages(options: UseMessagesOptions) {
     }
     connection.completed = true;
     delete activeConnections[messageId];
+    connection.onComplete?.();
     await options.onSessionsChanged?.();
   }
 
@@ -1342,22 +1369,24 @@ export function messageBlocks(content: ChatContent): MessageDisplayBlock[] {
   let currentParts: MessagePart[] = [];
 
   for (const part of parts) {
-    if (isEmptyPlainPart(part)) continue;
+    for (const piece of splitCardToolPart(part)) {
+      if (isEmptyPlainPart(piece)) continue;
 
-    const nextKind: MessageDisplayBlock["kind"] = isThinkingPart(part)
-      ? "thinking"
-      : "content";
+      const nextKind: MessageDisplayBlock["kind"] = isThinkingPart(piece)
+        ? "thinking"
+        : "content";
 
-    if (currentKind !== nextKind) {
-      if (currentKind && currentParts.length) {
-        blocks.push({ kind: currentKind, parts: currentParts });
+      if (currentKind !== nextKind) {
+        if (currentKind && currentParts.length) {
+          blocks.push({ kind: currentKind, parts: currentParts });
+        }
+        currentKind = nextKind;
+        currentParts = [{ ...piece }];
+        continue;
       }
-      currentKind = nextKind;
-      currentParts = [{ ...part }];
-      continue;
-    }
 
-    currentParts.push({ ...part });
+      currentParts.push({ ...piece });
+    }
   }
 
   if (currentKind && currentParts.length) {
@@ -1454,7 +1483,21 @@ function isEmptyPlainPart(part: MessagePart) {
 }
 
 function isThinkingPart(part: MessagePart) {
-  return part.type === "think" || part.type === "tool_call";
+  if (part.type === "think") return true;
+  if (part.type !== "tool_call" || !Array.isArray(part.tool_calls)) return false;
+  const tools = part.tool_calls;
+  return !tools.length || tools.some((tool) => !parseChihiroCard(tool.result));
+}
+
+function splitCardToolPart(part: MessagePart): MessagePart[] {
+  if (part.type !== "tool_call" || !Array.isArray(part.tool_calls)) return [part];
+  const cards = part.tool_calls.filter((tool) => parseChihiroCard(tool.result));
+  const rest = part.tool_calls.filter((tool) => !parseChihiroCard(tool.result));
+  if (!cards.length || !rest.length) return [part];
+  return [
+    { ...part, tool_calls: rest },
+    { ...part, tool_calls: cards },
+  ];
 }
 
 function firstNonEmptyPartIndex(parts: MessagePart[]) {

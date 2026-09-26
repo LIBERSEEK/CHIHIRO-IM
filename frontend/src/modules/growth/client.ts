@@ -20,6 +20,25 @@ export interface GrowthRuleGroup {
   commentImagePath?: string
   commentImageType?: GrowthImageType
   commentImageName?: string
+  commentSource?: 'model'
+}
+
+export interface GrowthCampaignSettings {
+  enabled: true
+  briefId: string
+  form: 'text' | 'image'
+  audience: string
+  offer: string
+  benefit: string
+  goal: string
+  tone: string
+  interaction: 'comment' | 'comment_like'
+  seedTags: string[]
+  learnedTags: string[]
+  learningCandidates: { keyword: string; count: number; videoIds?: string[] }[]
+  excludes: string[]
+  commentProvider?: string
+  commentModel?: string
 }
 
 export interface GrowthPreset {
@@ -50,6 +69,7 @@ export interface GrowthSettings {
   authorBlockKeywords: string[]
   ruleGroups: GrowthRuleGroup[]
   presets: GrowthPreset[]
+  campaign?: GrowthCampaignSettings | null
 }
 
 export interface GrowthLogLine {
@@ -128,6 +148,7 @@ function parseRuleGroup(value: unknown, index: number, depth: number): GrowthRul
     commentImagePath: children.length ? '' : String(value.commentImagePath || ''),
     commentImageType: value.commentImageType === 'file' ? 'file' : 'folder',
     commentImageName: children.length ? '' : String(value.commentImageName || ''),
+    ...(value.commentSource === 'model' ? { commentSource: 'model' as const } : {}),
   }
 }
 
@@ -198,6 +219,7 @@ export function parseGrowthSettings(value: unknown): GrowthSettings {
     blockKeywords: stringList(row.blockKeywords),
     authorBlockKeywords: stringList(row.authorBlockKeywords),
     ruleGroups,
+    campaign: parseCampaign(row.campaign),
     presets: Array.isArray(row.presets) ? row.presets.filter(record).map((item, index) => {
       const nested = parseGrowthSettings({ ...item, presets: [] })
       return {
@@ -393,7 +415,40 @@ export async function uploadGrowthCommentImages(
 
 export function groupHasCommentConfig(group: GrowthRuleGroup): boolean {
   if (group.children.length) return false
-  return group.comments.some(item => item.trim()) || Boolean(group.commentImagePath?.trim())
+  return group.comments.some(item => item.trim()) || Boolean(group.commentImagePath?.trim()) || group.commentSource === 'model'
+}
+
+function parseCampaign(value: unknown): GrowthCampaignSettings | null {
+  if (!record(value) || value.enabled !== true) return null
+  return {
+    enabled: true,
+    briefId: String(value.briefId || ''),
+    form: value.form === 'image' ? 'image' : 'text',
+    audience: String(value.audience || ''),
+    offer: String(value.offer || ''),
+    benefit: String(value.benefit || ''),
+    goal: String(value.goal || ''),
+    tone: String(value.tone || ''),
+    interaction: value.interaction === 'comment_like' ? 'comment_like' : 'comment',
+    seedTags: stringList(value.seedTags),
+    learnedTags: stringList(value.learnedTags),
+    learningCandidates: Array.isArray(value.learningCandidates)
+      ? value.learningCandidates.filter(record).map(item => ({
+        keyword: String(item.keyword || ''),
+        count: Math.max(1, Math.floor(Number(item.count) || 1)),
+        videoIds: Array.isArray(item.videoIds) ? item.videoIds.map(id => String(id || '')).filter(Boolean).slice(-3) : [],
+      })).filter(item => item.keyword)
+      : [],
+    excludes: stringList(value.excludes),
+    commentProvider: choice(value.commentProvider),
+    commentModel: choice(value.commentModel),
+  }
+}
+
+function choice(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text || text.length > 120 || /[\u0000-\u001f\u007f]/.test(text)) return ''
+  return text
 }
 
 export function leavesHaveCommentConfig(groups: GrowthRuleGroup[]): boolean {

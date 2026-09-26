@@ -5,6 +5,9 @@ import { createAccountStore } from './accounts.mjs'
 import { createQqRuntime } from './qq-napcat.mjs'
 import { createGrowthRuntime } from './growth.mjs'
 import { isDouyinAccountId } from './growth-ids.mjs'
+import { createLibrary } from './library.mjs'
+import { briefPrompt, createBriefStore, settingsFromBrief, stageCommentImages, stageInlineImages, turnBrief } from './growth-brief.mjs'
+import { completeWithAstrbot } from './growth-model.mjs'
 import { createAstrbotRuntime } from './astrbot.mjs'
 import { createBotController } from './bot.mjs'
 import { createBotSuggest } from './bot-suggest.mjs'
@@ -15,9 +18,12 @@ import { createAgentController } from './agent.mjs'
 import { createChatuiProxy } from './chatui.mjs'
 import { createCustomerInsights } from '../core/customer-insights.mjs'
 import { createGroupIntelligence } from '../core/group-intelligence.mjs'
+import { createEnvironmentService } from './environment.mjs'
 import { log, logError } from './log.mjs'
 
 export function createRuntime({ root, cfg, services = {} }) {
+  const managesLocalQq = !services.qq
+  const managesLocalAstrbot = !services.astrbot
   const dataDir = path.join(root, 'data')
   const store = createAccountStore(path.join(dataDir, 'accounts.json'))
   const qq = services.qq || createQqRuntime({
@@ -25,14 +31,19 @@ export function createRuntime({ root, cfg, services = {} }) {
     logDir: path.join(dataDir, 'logs'),
     root
   })
+  const astrbot = services.astrbot || createAstrbotRuntime({ root, cfg })
+  const library = services.library || createLibrary(path.join(dataDir, 'library'))
+  const briefs = services.briefs || createBriefStore(path.join(dataDir, 'growth-briefs.json'))
   const growth = services.growth || createGrowthRuntime({
     root,
     store,
     emit: () => qq.touch?.(),
     loginWaiter: services.growthLoginWaiter,
     feedRunner: services.growthFeedRunner,
+    complete: (prompt, sessionId, options) => services.complete
+      ? services.complete(prompt, sessionId, options)
+      : completeWithAstrbot(astrbot, prompt, { sessionId, provider: options?.provider, model: options?.model }),
   })
-  const astrbot = services.astrbot || createAstrbotRuntime({ root, cfg })
   const agent = createAgentController({ root, store, qq, astrbot, cfg })
   const customers = services.customers || createCustomerInsights({ root })
   const groupIntelligence = services.groupIntelligence || createGroupIntelligence({ root })
@@ -55,6 +66,15 @@ export function createRuntime({ root, cfg, services = {} }) {
     },
   })
   const chatui = services.chatui || createChatuiProxy({ astrbot })
+  const environment = services.environment || createEnvironmentService({ root })
+
+  async function prepareEnvironment(capability) {
+    let report = environment.diagnose()
+    if (report.capabilities[capability]?.status === 'repairable') {
+      report = await environment.repair({ capability })
+    }
+    return report
+  }
 
   async function snapshot() {
     const snap = growth.decorateSnapshot(qq.snapshot())
@@ -73,6 +93,22 @@ export function createRuntime({ root, cfg, services = {} }) {
   async function handle(req, res, url) {
     const method = req.method || 'GET'
     const p = url.pathname
+
+    if (p === '/api/runtime/doctor' && method === 'GET') {
+      return json(res, environment.diagnose())
+    }
+
+    if (p === '/api/runtime/repair' && method === 'POST') {
+      try {
+        const body = await readJson(req)
+        const capability = body.capability === 'qq' || body.capability === 'agent' ? body.capability : undefined
+        const report = await environment.repair({ capability })
+        return json(res, report, report.errors?.length ? 500 : 200)
+      } catch (error) {
+        logError('api', 'environment.repair', error)
+        return json(res, { error: 'repair_failed', message: error.message || String(error) }, 500)
+      }
+    }
 
     if (p === '/api/runtime/clients' && method === 'GET') {
       return json(res, { clients: CLIENTS })
@@ -342,6 +378,7 @@ export function createRuntime({ root, cfg, services = {} }) {
 
     if (p === '/api/runtime/bot/ensure' && method === 'POST') {
       try {
+        if (managesLocalAstrbot) await prepareEnvironment('agent')
         await astrbot.ensure()
         return json(res, await snapshot())
       } catch (e) {
@@ -386,6 +423,7 @@ export function createRuntime({ root, cfg, services = {} }) {
         growth.prepareNew(accountId)
         return json(res, await snapshot())
       }
+      if (managesLocalQq) await prepareEnvironment('qq')
       const snap = await qq.start({
         uin: body.uin,
         forceNew: body.mode === 'new' || body.forceNew === true,
@@ -393,6 +431,118 @@ export function createRuntime({ root, cfg, services = {} }) {
       })
       snap.astrbot = await astrbot.refreshStatus()
       return json(res, snap)
+    }
+
+    if (p === '/api/runtime/library' && method === 'GET') {
+      return json(res, { items: library.list() })
+    }
+
+    if (p === '/api/runtime/library' && method === 'POST') {
+      try {
+        return json(res, { item: library.add(await readJson(req)) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message }, 400)
+      }
+    }
+
+    const libraryFile = p.match(/^\/api\/runtime\/library\/([^/]+)\/file$/)
+    if (libraryFile && method === 'GET') {
+      const file = library.file(decodePathPart(libraryFile[1]))
+      if (!file) return json(res, { error: 'not_found' }, 404)
+      res.writeHead(200, { 'Content-Type': file.item.mime, 'Cache-Control': 'private, max-age=86400' })
+      res.end(fs.readFileSync(file.path))
+      return true
+    }
+
+    const libraryItem = p.match(/^\/api\/runtime\/library\/([^/]+)$/)
+    if (libraryItem && method === 'DELETE') {
+      library.remove(decodePathPart(libraryItem[1]))
+      return json(res, { items: library.list() })
+    }
+
+    if (p === '/api/runtime/growth/brief' && method === 'GET') {
+      const id = String(url.searchParams.get('id') || '').trim()
+      if (id) {
+        const brief = briefs.get(id)
+        if (!brief) return json(res, { error: 'not_found', message: '没有这张任务卡' }, 404)
+        return json(res, { brief, items: library.list() })
+      }
+      return json(res, { brief: briefs.ensure(), items: library.list() })
+    }
+
+    if (p === '/api/runtime/growth/brief' && method === 'POST') {
+      const body = await readJson(req)
+      return json(res, { brief: briefs.put(body.brief || body) })
+    }
+
+    if (p === '/api/runtime/growth/brief/turn' && method === 'POST') {
+      try {
+        const body = await readJson(req)
+        const text = String(body.text || '').trim()
+        if (!text) return json(res, { error: '请先说说想投放的人群', message: '请先说说想投放的人群' }, 400)
+        const current = briefs.get(body.id) || briefs.ensure()
+        const draft = briefs.put({
+          ...current,
+          form: body.form === 'image' ? 'image' : (body.form === 'text' ? 'text' : current.form),
+          commentImageIds: Array.isArray(body.commentImageIds) ? body.commentImageIds : current.commentImageIds,
+          referenceIds: Array.isArray(body.referenceIds) ? body.referenceIds : current.referenceIds,
+        })
+        const names = [...draft.commentImageIds, ...draft.referenceIds]
+          .map((id) => library.file(id)?.item?.name)
+          .filter(Boolean)
+        const modelText = await completeWithAstrbot(astrbot, briefPrompt(draft, text, names), { sessionId: `growth-brief:${draft.id}` })
+        return json(res, { brief: briefs.put(turnBrief(draft, text, modelText)) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message }, 400)
+      }
+    }
+
+    if (p === '/api/runtime/growth/brief/start' && method === 'POST') {
+      try {
+        const body = await readJson(req)
+        const current = briefs.get(body.id) || briefs.ensure()
+        const saved = briefs.put({
+          ...current,
+          ...(body.form === 'image' || body.form === 'text' ? { form: body.form } : {}),
+          ...(typeof body.audience === 'string' ? { audience: body.audience } : {}),
+          ...(typeof body.offer === 'string' ? { offer: body.offer } : {}),
+          ...(typeof body.benefit === 'string' ? { benefit: body.benefit } : {}),
+          ...(typeof body.goal === 'string' ? { goal: body.goal } : {}),
+          ...(typeof body.tone === 'string' ? { tone: body.tone } : {}),
+          ...(Array.isArray(body.tags) ? { tags: body.tags } : {}),
+          ...(Array.isArray(body.excludes) ? { excludes: body.excludes } : {}),
+          ...(body.interaction === 'comment' || body.interaction === 'comment_like' ? { interaction: body.interaction } : {}),
+          ...(body.maxCount ? { maxCount: body.maxCount } : {}),
+          ...(Array.isArray(body.commentImageIds) ? { commentImageIds: body.commentImageIds } : {}),
+          ...(Array.isArray(body.referenceIds) ? { referenceIds: body.referenceIds } : {}),
+          ...(typeof body.commentProvider === 'string' ? { commentProvider: body.commentProvider } : {}),
+          ...(typeof body.commentModel === 'string' ? { commentModel: body.commentModel } : {}),
+          excludesAsked: true,
+        })
+        if (!saved.tags.length || !saved.tone || !saved.offer || !saved.benefit) {
+          return json(res, { error: '资料还没齐', message: '资料还没齐', brief: saved }, 400)
+        }
+        const accounts = (store.list().accounts || []).filter((account) => isDouyinAccountId(account.id))
+        const preferred = accounts.find((account) => account.id === (body.accountId || saved.accountId))
+          || accounts.find((account) => growth.hasStorage(account.id))
+          || accounts[0]
+        if (!preferred || !growth.hasStorage(preferred.id)) {
+          return json(res, { needsLogin: true, accountId: preferred?.id || '', brief: saved })
+        }
+        let imageDir = ''
+        const inlineImages = Array.isArray(body.commentImageFiles) ? body.commentImageFiles : []
+        if (saved.form === 'image' || inlineImages.length) {
+          imageDir = growth.commentImageDirectory(preferred.id, saved.id)
+          const count = stageCommentImages(imageDir, saved.commentImageIds, (id) => library.file(id))
+            + stageInlineImages(imageDir, inlineImages)
+          if (!count) return json(res, { error: '请先选择评论配图', message: '请先选择评论配图', brief: saved }, 400)
+        }
+        await growth.startTask(preferred.id, settingsFromBrief(saved, imageDir))
+        const started = briefs.put({ ...saved, status: 'started', accountId: preferred.id })
+        return json(res, { started: true, accountId: preferred.id, brief: started, ...(await snapshot()) })
+      } catch (e) {
+        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
+      }
     }
 
     if (p === '/api/runtime/growth/browser' && method === 'POST') {
@@ -631,7 +781,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     await astrbot.stopIfOwned().catch((e) => logError('api', 'astrbot stop', e))
   }
 
-  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, growth, snapshot, shutdown }
+  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, growth, environment, prepareEnvironment, snapshot, shutdown }
 }
 
 function json(res, obj, status = 200) {

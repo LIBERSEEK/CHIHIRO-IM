@@ -2,6 +2,7 @@
 import { inject, onBeforeUnmount, onMounted, ref, shallowRef, type Component } from 'vue'
 import { recoverStaleChunk } from '@/app/stale-chunk'
 import { agentLoaderKey } from './loader'
+import RuntimeRecovery from './RuntimeRecovery.vue'
 
 const props = defineProps<{ sidebarTarget: HTMLElement; threadTarget: HTMLElement }>()
 const loadAgent = inject(agentLoaderKey)
@@ -35,6 +36,9 @@ onBeforeUnmount(() => { active = false })
     <p>{{ loading ? '正在加载工作台…' : error }}</p>
     <button v-if="!loading" type="button" @click="load">重新加载</button>
   </section></Teleport>
+  <Teleport v-if="!component && error" :to="threadTarget">
+    <RuntimeRecovery :error="error" @recovered="load" />
+  </Teleport>
 </template>
 
 <style scoped>

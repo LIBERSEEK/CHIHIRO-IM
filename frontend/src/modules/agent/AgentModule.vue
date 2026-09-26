@@ -9,6 +9,7 @@ import { createHostedAgentNavigation, agentNavigationKey } from './native/src/na
 import type { ConfirmDialogHandler } from './native/src/utils/confirmDialog'
 import { useWorkspace } from '@/modules/workspace/workspace'
 import { useRouter } from 'vue-router'
+import RuntimeRecovery from './RuntimeRecovery.vue'
 
 const customizer = useCustomizerStore()
 const workspace = useWorkspace()
@@ -80,7 +81,8 @@ onBeforeUnmount(() => { for (const resolve of pendingConfirms) resolve(false); p
     <v-app class="agent-v-app" :theme="customizer.uiTheme">
       <UserChat v-if="ready" chihiro-hosted :sidebar-target="sidebarTarget" :thread-target="threadTarget" />
       <Teleport v-else :to="sidebarTarget">
-        <div class="agent-startup" role="status">
+        <RuntimeRecovery v-if="startupError && !starting" compact :error="startupError" @recovered="startAgent" />
+        <div v-else class="agent-startup" role="status">
           <p>{{ starting ? '正在连接 Agent…' : startupError }}</p>
           <button v-if="!starting" type="button" @click="startAgent">重试连接</button>
         </div>

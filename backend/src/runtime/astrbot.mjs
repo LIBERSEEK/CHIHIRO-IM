@@ -7,6 +7,7 @@ import { portOpen } from './qq-ports.mjs'
 import { log, logError } from './log.mjs'
 
 const execFileAsync = promisify(execFile)
+const ASTRBOT_START_TIMEOUT_MS = 60000
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -52,18 +53,23 @@ function jwtHs256(payload, secret) {
 }
 
 function resolveBin() {
-  if (process.env.ASTRBOT_BIN && fs.existsSync(process.env.ASTRBOT_BIN)) {
-    return process.env.ASTRBOT_BIN
-  }
+  if (process.env.ASTRBOT_BIN) return process.env.ASTRBOT_BIN
   const home = process.env.HOME || ''
   const local = path.join(home, '.local/bin/astrbot')
   if (fs.existsSync(local)) return local
   return 'astrbot'
 }
 
-function resolvePython() {
+function resolvePython({ dataDir, vendorDir } = {}) {
   if (process.env.ASTRBOT_PYTHON && fs.existsSync(process.env.ASTRBOT_PYTHON)) {
     return process.env.ASTRBOT_PYTHON
+  }
+  const candidates = [
+    dataDir && path.join(dataDir, '.venv/bin/python'),
+    vendorDir && path.join(vendorDir, '.venv/bin/python')
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
   }
   const bin = resolveBin()
   try {
@@ -323,9 +329,10 @@ export function createAstrbotRuntime({ root, cfg }) {
     }
   }
 
-  async function waitPort(n, ms = 20000) {
+  async function waitPort(n, ms = 20000, shouldStop = () => false) {
     const start = Date.now()
     while (Date.now() - start < ms) {
+      if (shouldStop()) return false
       if (await portOpen(n, host === '0.0.0.0' ? '127.0.0.1' : host)) return true
       await sleep(400)
     }
@@ -384,7 +391,7 @@ export function createAstrbotRuntime({ root, cfg }) {
     const vendorDir = path.join(root, 'vendor/astrbot')
     const vendorMain = path.join(vendorDir, 'main.py')
     const webui = path.join(vendorDir, 'astrbot/dashboard/dist')
-    const py = resolvePython()
+    const py = resolvePython({ dataDir, vendorDir })
     const env = {
       ...process.env,
       PATH: `${extraPath}${path.delimiter}${process.env.PATH || ''}`,
@@ -405,21 +412,51 @@ export function createAstrbotRuntime({ root, cfg }) {
       args = ['run', '-p', String(port)]
       log('astrbot', `spawn ${cmd} ${args.join(' ')} cwd=${dataDir}`)
     }
-    child = spawn(cmd, args, {
+    const spawned = spawn(cmd, args, {
       cwd: dataDir,
       env,
       stdio: ['ignore', logFd, logFd]
     })
-    ownedPid = child.pid
-    child.on('exit', (code, signal) => {
-      log('astrbot', `exit code=${code} signal=${signal || '-'}`)
-      if (child && child.pid === ownedPid) {
-        child = null
-        ownedPid = null
-      }
+    child = spawned
+    ownedPid = spawned.pid || null
+    let startupSettled = false
+    let logOpen = true
+    const closeLog = () => {
+      if (!logOpen) return
+      logOpen = false
       try { fs.closeSync(logFd) } catch { /* already closed */ }
+    }
+    const clearSpawned = () => {
+      if (child !== spawned) return
+      child = null
+      ownedPid = null
+    }
+    const startupFailure = new Promise((_, reject) => {
+      spawned.once('error', (error) => {
+        const message = error?.code === 'ENOENT'
+          ? `AstrBot 启动命令不存在：${cmd}`
+          : `AstrBot 启动失败：${error.message || error}`
+        lastError = message
+        clearSpawned()
+        closeLog()
+        if (!startupSettled) reject(new Error(message, { cause: error }))
+      })
+      spawned.once('exit', (code, signal) => {
+        log('astrbot', `exit code=${code} signal=${signal || '-'}`)
+        clearSpawned()
+        closeLog()
+        if (!startupSettled) {
+          const detail = signal ? `signal ${signal}` : `code ${code}`
+          lastError = `AstrBot 启动期间退出（${detail}）`
+          reject(new Error(lastError))
+        }
+      })
     })
-    const up = await waitPort(port, 25000)
+    const up = await Promise.race([
+      waitPort(port, ASTRBOT_START_TIMEOUT_MS, () => child !== spawned),
+      startupFailure
+    ])
+    startupSettled = true
     if (!up) {
       lastError = `AstrBot Dashboard 未在 ${port} 起来`
       throw new Error(lastError)

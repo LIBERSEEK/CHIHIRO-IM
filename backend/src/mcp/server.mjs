@@ -5,21 +5,15 @@
  *
  * Claude Desktop / Codex extra:
  *   { "mcpServers": { "chihiro": { "command": "node", "args": ["/abs/path/backend/src/mcp/server.mjs"] } } }
+ *
+ * The workbench campaign agent uses growth-server.mjs so it does not receive QQ tools.
+ * Both entries answer newline JSON-RPC and Content-Length.
  */
-import { stdin, stdout } from 'node:process'
+import { callGrowthTool, growthToolDefinitions, growthToolName } from './growth-card.mjs'
+import { createMcpHandler, serveMcp } from './stdio.mjs'
+import { createWorkbenchApi } from './workbench-api.mjs'
 
-const BASE = process.env.CHIHIRO_URL || 'http://127.0.0.1:3100'
-
-async function api(method, path, body) {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined
-  })
-  const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(json.message || json.error || `HTTP ${res.status}`)
-  return json
-}
+const api = createWorkbenchApi()
 
 const tools = [
   {
@@ -93,7 +87,8 @@ const tools = [
       },
       required: ['action']
     }
-  }
+  },
+  ...growthToolDefinitions(),
 ]
 
 async function callTool(name, args = {}) {
@@ -130,90 +125,20 @@ async function callTool(name, args = {}) {
       throw new Error('unknown_gate_action')
     }
     default:
+      if (growthToolName(name)) return callGrowthTool(name, args, api)
       throw new Error(`unknown tool ${name}`)
   }
 }
 
-function write(msg) {
-  const json = JSON.stringify(msg)
-  const buf = Buffer.from(json, 'utf8')
-  const head = Buffer.alloc(4)
-  // MCP stdio uses Content-Length headers (LSP style), not raw JSON lines.
-  stdout.write(`Content-Length: ${buf.length}\r\n\r\n`)
-  stdout.write(buf)
-}
-
-let buf = Buffer.alloc(0)
-stdin.on('data', (chunk) => {
-  buf = Buffer.concat([buf, chunk])
-  while (true) {
-    const headerEnd = buf.indexOf('\r\n\r\n')
-    if (headerEnd < 0) break
-    const header = buf.slice(0, headerEnd).toString('utf8')
-    const match = header.match(/Content-Length:\s*(\d+)/i)
-    if (!match) {
-      buf = buf.slice(headerEnd + 4)
-      continue
-    }
-    const len = Number(match[1])
-    const start = headerEnd + 4
-    if (buf.length < start + len) break
-    const body = buf.slice(start, start + len).toString('utf8')
-    buf = buf.slice(start + len)
-    handle(body).catch((e) => {
-      write({ jsonrpc: '2.0', error: { code: -32603, message: e.message }, id: null })
-    })
-  }
-})
-
-async function handle(raw) {
-  const msg = JSON.parse(raw)
-  const { id, method, params } = msg
-  if (method === 'initialize') {
-    write({
-      jsonrpc: '2.0',
-      id,
-      result: {
-        protocolVersion: params?.protocolVersion || '2024-11-05',
-        capabilities: { tools: {} },
-        instructions:
-          'Chihiro QQ hands. Tools: observe, send, contact, gate. ' +
-          'Use observe kind=session|messages with peerId+type to read live QQ chat history (bridged). ' +
-          'Do not invent accountId/peerId/userId/groupId. contact may run without asking and may be repeated for multiple observed targets; the server spaces real submits by 6–10s per account. ' +
-          'send follows Chihiro gate mode (ask/auto/always). Ask before gate.approve. ' +
-          'Image generation is your job; send.image only delivers a file you already have.',
-        serverInfo: { name: 'chihiro', version: '0.2.0' }
-      }
-    })
-    return
-  }
-  if (method === 'notifications/initialized' || method === 'notifications/cancelled') return
-  if (method === 'tools/list') {
-    write({ jsonrpc: '2.0', id, result: { tools } })
-    return
-  }
-  if (method === 'tools/call') {
-    try {
-      const result = await callTool(params.name, params.arguments || {})
-      write({
-        jsonrpc: '2.0',
-        id,
-        result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
-      })
-    } catch (e) {
-      write({
-        jsonrpc: '2.0',
-        id,
-        result: { isError: true, content: [{ type: 'text', text: e.message }] }
-      })
-    }
-    return
-  }
-  if (method === 'ping') {
-    write({ jsonrpc: '2.0', id, result: {} })
-    return
-  }
-  write({ jsonrpc: '2.0', id, error: { code: -32601, message: `unknown method ${method}` } })
-}
-
-stdin.resume()
+serveMcp(createMcpHandler({
+  serverInfo: { name: 'chihiro', version: '0.2.0' },
+  instructions:
+    'Chihiro QQ hands. Tools: observe, send, contact, gate. ' +
+    'Use observe kind=session|messages with peerId+type to read live QQ chat history (bridged). ' +
+    'Do not invent accountId/peerId/userId/groupId. contact may run without asking and may be repeated for multiple observed targets; the server spaces real submits by 6–10s per account. ' +
+    'send follows Chihiro gate mode (ask/auto/always). Ask before gate.approve. ' +
+    'Image generation is your job; send.image only delivers a file you already have. ' +
+    'Douyin comment campaigns use growth_schema, growth_draft and growth_get. Those tools never start a task.',
+  tools,
+  callTool,
+}))

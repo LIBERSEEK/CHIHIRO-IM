@@ -27,6 +27,14 @@ describe('growth client', () => {
     expect(settings.simulateWatchBeforeComment).toBe(true)
     expect(settings.authorBlockKeywords).toEqual([])
     expect(settings.presets).toEqual([])
+    expect(settings.campaign).toBeNull()
+    const modelled = parseGrowthSettings({
+      campaign: { enabled: true, briefId: 'b1', form: 'text', tone: '像路过的同行', seedTags: ['全屋定制'], excludes: ['中介'] },
+      ruleGroups: [{ id: 'campaign', name: '投放人群', comments: [], commentSource: 'model', rules: [{ field: 'videoDesc', keyword: '全屋定制' }] }],
+    })
+    expect(modelled.campaign?.seedTags).toEqual(['全屋定制'])
+    expect(modelled.ruleGroups[0].commentSource).toBe('model')
+    expect(leavesHaveCommentConfig(modelled.ruleGroups)).toBe(true)
     const nested = parseGrowthSettings({
       ruleGroups: [{
         id: 'p',

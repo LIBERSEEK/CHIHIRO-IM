@@ -256,7 +256,6 @@ async function setMode(next: 'pip' | 'window') {
         </button>
       </div>
     </div>
-    <p>{{ lastLog }}</p>
     <div class="growth-pip-actions">
       <button
         v-if="task.running"
@@ -268,6 +267,7 @@ async function setMode(next: 'pip' | 'window') {
       <button v-if="task.running" type="button" class="danger" @click="stopTask">停止</button>
       <button type="button" @click="shell.setGrowthPipOpen(false)">收起</button>
     </div>
+    <p>{{ lastLog }}</p>
   </aside>
 </template>
 

@@ -23,47 +23,66 @@
     </section>
 
     <section class="project-sessions-list">
-      <div v-if="sessions.length > 0" class="project-session-list">
-        <button
-          v-for="session in sessions"
+      <div v-if="visibleSessions.length > 0" class="project-session-list">
+        <div
+          v-for="session in visibleSessions"
           :key="session.session_id"
-          type="button"
-          @click="$emit('selectSession', session.session_id)"
           class="project-session-item"
+          :class="{ 'is-pinned': isPinned(session.session_id) }"
+          role="button"
+          tabindex="0"
+          @click="$emit('selectSession', session.session_id)"
+          @keydown.enter="$emit('selectSession', session.session_id)"
         >
           <span class="project-session-copy">
-            <span class="project-session-title">
+            <input
+              v-if="renamingSessionId === session.session_id"
+              ref="renameInput"
+              v-model="renameDraft"
+              class="project-session-title-input"
+              :aria-label="tm('conversation.editDisplayName')"
+              @click.stop
+              @dblclick.stop
+              @keydown.enter.stop.prevent="commitRename(session)"
+              @keydown.esc.stop.prevent="cancelRename"
+              @blur="commitRename(session)"
+            />
+            <span
+              v-else
+              class="project-session-title"
+              @dblclick.stop="beginRename(session)"
+            >
               {{ session.display_name || tm("conversation.newConversation") }}
             </span>
             <span class="project-session-time">
               {{ formatDate(session.updated_at) }}
             </span>
           </span>
-          <span class="session-actions">
+          <span class="session-actions" @click.stop>
             <button
               type="button"
-              class="project-session-action"
-              :title="tm('conversation.editDisplayName')"
-              @click.stop="
-                $emit(
-                  'editSessionTitle',
-                  session.session_id,
-                  session.display_name ?? '',
-                )
-              "
+              class="project-session-action session-pin-btn"
+              :title="pinLabel(session.session_id)"
+              :aria-label="pinLabel(session.session_id)"
+              :aria-pressed="isPinned(session.session_id)"
+              @click="togglePin(session.session_id)"
             >
-              <Pencil :size="17" />
+              <Pin
+                :size="17"
+                :fill="isPinned(session.session_id) ? 'currentColor' : 'none'"
+              />
             </button>
             <button
               type="button"
-              class="project-session-action delete-session-btn"
-              :title="tm('actions.deleteChat')"
-              @click.stop="handleDeleteSession(session)"
+              class="project-session-action session-archive-btn"
+              :title="tm('conversation.archive')"
+              :aria-label="tm('conversation.archive')"
+              @click="archiveSession(session.session_id)"
             >
-              <Trash2 :size="17" />
+              <Archive :size="17" />
             </button>
           </span>
-        </button>
+        </div>
       </div>
       <div v-else class="no-sessions-in-project">
         <MessageSquare :size="22" />
@@ -78,11 +97,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
-import { FolderCog, MessageSquare, Pencil, Trash2 } from "@lucide/vue";
-import { useI18n, useModuleI18n } from "@/modules/agent/native/src/i18n/composables";
+import { computed, nextTick, ref } from "vue";
+import { Archive, FolderCog, MessageSquare, Pin } from "@lucide/vue";
+import { useModuleI18n } from "@/modules/agent/native/src/i18n/composables";
 import type { Project } from "@/modules/agent/native/src/components/chat/ProjectList.vue";
-import { askForConfirmation, useConfirmDialog } from "@/modules/agent/native/src/utils/confirmDialog";
+import { useSidebarSessionFlags } from "@/modules/agent/native/src/use-sidebar-session-flags";
 
 interface Session {
   session_id: string;
@@ -99,14 +118,16 @@ const props = defineProps<Props>();
 
 const emit = defineEmits<{
   selectSession: [sessionId: string];
-  editSessionTitle: [sessionId: string, title: string];
-  deleteSession: [sessionId: string];
+  renameSession: [sessionId: string, title: string];
 }>();
 
-const { t } = useI18n();
 const { tm } = useModuleI18n("features/chat");
-
-const confirmDialog = useConfirmDialog();
+const { togglePin, archiveSession, isPinned, arrange } = useSidebarSessionFlags();
+const visibleSessions = computed(() => arrange(props.sessions));
+const renamingSessionId = ref("");
+const renameDraft = ref("");
+const renameInput = ref<HTMLInputElement | null>(null);
+let renameCanceled = false;
 
 const workspaceSummary = computed(() => {
   const project = props.project;
@@ -130,13 +151,35 @@ function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleString();
 }
 
-async function handleDeleteSession(session: Session) {
-  if (await askForConfirmation(tm("conversation.confirmDelete"), confirmDialog, {
-    title: tm("conversation.confirmDeleteTitle"),
-    confirmText: t("core.common.delete"),
-  })) {
-    emit("deleteSession", session.session_id);
+function pinLabel(sessionId: string) {
+  return isPinned(sessionId) ? tm("conversation.unpin") : tm("conversation.pin");
+}
+
+async function beginRename(session: Session) {
+  renameCanceled = false;
+  renamingSessionId.value = session.session_id;
+  renameDraft.value = session.display_name || "";
+  await nextTick();
+  const input = Array.isArray(renameInput.value) ? renameInput.value[0] : renameInput.value;
+  input?.focus();
+  input?.select();
+}
+
+function cancelRename() {
+  renameCanceled = true;
+  renamingSessionId.value = "";
+}
+
+function commitRename(session: Session) {
+  if (renameCanceled) {
+    renameCanceled = false;
+    return;
   }
+  if (renamingSessionId.value !== session.session_id) return;
+  const title = renameDraft.value.trim();
+  renamingSessionId.value = "";
+  if ((session.display_name || "") === title) return;
+  emit("renameSession", session.session_id, title);
 }
 </script>
 
@@ -257,9 +300,36 @@ async function handleDeleteSession(session: Session) {
   background-color: rgba(var(--v-theme-on-surface), 0.04) !important;
 }
 
-.project-session-item:hover .session-actions {
+.project-session-item:hover .session-actions,
+.project-session-item:focus-within .session-actions,
+.project-session-item.is-pinned .session-actions {
   opacity: 1;
   visibility: visible;
+}
+
+.project-session-item.is-pinned:not(:hover):not(:focus-within) .session-actions {
+  pointer-events: none;
+}
+
+.project-session-item.is-pinned:not(:hover):not(:focus-within) .session-pin-btn {
+  pointer-events: auto;
+}
+
+.project-session-item.is-pinned:not(:hover):not(:focus-within) .session-archive-btn {
+  opacity: 0;
+}
+
+.project-session-title-input {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 520;
+  line-height: 20px;
+  outline: none;
 }
 
 .project-session-copy {
@@ -311,10 +381,6 @@ async function handleDeleteSession(session: Session) {
 .project-session-action:hover {
   background: rgba(var(--v-theme-on-surface), 0.06);
   color: rgb(var(--v-theme-on-surface));
-}
-
-.delete-session-btn {
-  color: rgb(var(--v-theme-error));
 }
 
 .no-sessions-in-project {

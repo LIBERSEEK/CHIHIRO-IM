@@ -166,12 +166,17 @@ test('headed login writes storageState and marks the Douyin account online', asy
   assert.equal(avatar.body[0], 0xff)
 })
 
-test('feed worker comments then advances, skipping blocked videos', async () => {
+test('feed worker comments then advances, skipping blocked videos, and attaches one random configured image', async (t) => {
   const events = []
   const reasons = []
   const presses = []
   const comments = []
   const selectors = []
+  const attachedFiles = []
+  const imageDir = await mkdtemp(path.join(os.tmpdir(), 'chihiro-growth-comment-images-'))
+  t.after(() => rm(imageDir, { recursive: true, force: true }))
+  fs.writeFileSync(path.join(imageDir, 'first.png'), 'first')
+  fs.writeFileSync(path.join(imageDir, 'second.jpg'), 'second')
   let currentId = '1'
   const page = {
     on(event, handler) {
@@ -189,6 +194,10 @@ test('feed worker comments then advances, skipping blocked videos', async () => 
         }),
       })
     },
+    async waitForEvent(event) {
+      assert.equal(event, 'filechooser')
+      return { setFiles: async (files) => attachedFiles.push(...(Array.isArray(files) ? files : [files])) }
+    },
     keyboard: {
       press: async (key) => {
         presses.push(key)
@@ -202,6 +211,7 @@ test('feed worker comments then advances, skipping blocked videos', async () => 
         first() { return node },
         count: async () => (selector === '#videoSideCard' ? 0 : 1),
         click: async () => {},
+        setInputFiles: async () => {},
         waitFor: async () => {},
         evaluate: async () => 0,
         getAttribute: async (name) => (selector === '[data-e2e="feed-active-video"]' && name === 'data-e2e-vid' ? currentId : null),
@@ -251,6 +261,8 @@ test('feed worker comments then advances, skipping blocked videos', async () => 
           relation: 'or',
           rules: [{ field: 'videoDesc', keyword: '手机' }],
           comments: ['评测很专业！'],
+          commentImagePath: imageDir,
+          commentImageType: 'folder',
           children: [],
         }],
       }],
@@ -269,6 +281,8 @@ test('feed worker comments then advances, skipping blocked videos', async () => 
   assert.ok(presses.includes('Enter'))
   assert.ok(presses.includes('ArrowDown'))
   assert.ok(selectors.includes('.comment-input-inner-container'))
+  assert.equal(attachedFiles.length, 1)
+  assert.ok([path.join(imageDir, 'first.png'), path.join(imageDir, 'second.jpg')].includes(attachedFiles[0]))
   assert.ok(events.includes('skipped'))
   assert.ok(events.includes('评测很专业！'))
   assert.ok(reasons.includes('命中屏蔽关键词'))
@@ -277,6 +291,106 @@ test('feed worker comments then advances, skipping blocked videos', async () => 
   assert.equal(contextOptions.storageState, '/tmp/state.json')
   assert.equal(contextOptions.viewport, undefined)
   assert.equal(contextOptions.isMobile, undefined)
+})
+
+test('campaign comments hear the comment section before asking the model', async () => {
+  const listeners = new Set()
+  const order = []
+  let peers = null
+  const page = {
+    on(event, handler) {
+      if (event === 'response') listeners.add(handler)
+    },
+    removeListener(event, handler) {
+      if (event === 'response') listeners.delete(handler)
+    },
+    async goto() {
+      for (const handler of [...listeners]) {
+        await handler({
+          url: () => 'https://www.douyin.com/aweme/v1/web/tab/feed/?count=10',
+          json: async () => ({
+            aweme_list: [{ aweme_id: '9', aweme_type: 0, desc: 'Codex 长任务经常跑断', author: { nickname: 'builder', uid: '1' } }],
+          }),
+        })
+      }
+    },
+    keyboard: {
+      press: async (key) => {
+        order.push(key)
+        if (key !== 'x') return
+        for (const handler of [...listeners]) {
+          await handler({
+            url: () => 'https://www.douyin.com/aweme/v1/web/comment/list/?cursor=0',
+            json: async () => ({
+              comments: [
+                { text: '这也太费 token 了吧' },
+                { text: '哈哈笑死' },
+                { text: '哈' },
+              ],
+            }),
+          })
+        }
+      },
+      type: async () => {},
+    },
+    locator() {
+      const node = {
+        first() { return node },
+        count: async () => 1,
+        click: async () => {},
+        waitFor: async () => {},
+        evaluate: async () => 0,
+        getAttribute: async () => '9',
+      }
+      return node
+    },
+  }
+  const launch = {
+    chromium: {
+      launch: async () => ({
+        newContext: async () => ({ newPage: async () => page, storageState: async () => {} }),
+        close: async () => {},
+      }),
+    },
+  }
+  const result = await runDouyinFeedTask({
+    executablePath: '/usr/bin/google-chrome',
+    storageStatePath: '/tmp/state.json',
+    settings: {
+      maxCount: 1,
+      fast: true,
+      simulateWatchBeforeComment: false,
+      campaign: {
+        enabled: true,
+        audience: '用 Codex 的人',
+        offer: '统一 API 入口',
+        benefit: '少改几处配置',
+        tone: '随口',
+        excludes: [],
+        form: 'text',
+        interaction: 'comment',
+      },
+      ruleGroups: [{
+        id: 'campaign',
+        name: '投放人群',
+        type: 'manual',
+        relation: 'or',
+        rules: [{ field: 'videoDesc', keyword: 'Codex' }],
+        comments: [],
+        children: [],
+      }],
+    },
+    launch,
+    writeComment: async (_settings, video) => {
+      order.push('write')
+      peers = video.peerComments
+      return '{"comment":"长任务跑断确实烦，统一入口少改两处"}'
+    },
+  })
+  assert.equal(result.commented, 1)
+  assert.deepEqual(peers, ['这也太费 token 了吧', '哈哈笑死'])
+  assert.ok(order.indexOf('x') >= 0)
+  assert.ok(order.indexOf('x') < order.indexOf('write'))
 })
 
 test('rule groups only match the leaf that satisfies parent and child keywords', () => {
@@ -348,6 +462,20 @@ test('rule groups only match the leaf that satisfies parent and child keywords',
     children: [],
   }], { desc: '任意内容', author: { nickname: 'a' }, video_tag: [] })
   assert.equal(emptyRules, null)
+  const folded = matchRuleGroups([{
+    id: 'codex',
+    name: '投放人群',
+    type: 'manual',
+    relation: 'or',
+    rules: [{ field: 'videoDesc', keyword: 'Codex' }, { field: 'videoTag', keyword: 'GPT' }, { field: 'nickName', keyword: 'Teacher' }],
+    comments: [],
+    children: [],
+  }], {
+    desc: '今天聊一下 codex 的额度',
+    author: { nickname: 'night teacher' },
+    video_tag: [{ tag_name: 'gpt工具' }],
+  })
+  assert.equal(folded?.id, 'codex')
 })
 
 test('video activity skip reasons match the two-day and one-day thresholds', () => {

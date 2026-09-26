@@ -7,7 +7,7 @@ import path from 'node:path'
 import httpProxy from 'http-proxy'
 import { WebSocket, WebSocketServer } from 'ws'
 import { serveAstrbotChatui, authorizeAstrbotRequest } from '../../src/gateway/astrbot-chatui.mjs'
-import { ensureAstrbotReady } from '../../src/gateway/astrbot-proxy.mjs'
+import { ensureAstrbotReady, forwardAstrbotDashboard, rewriteAstrbotLocation, rewriteAstrbotMount } from '../../src/gateway/astrbot-proxy.mjs'
 
 const listen = (server) => new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)))
 test('ChatUI assets are local, missing/encoded escaping assets never fall through to Python', async (t) => {
@@ -96,6 +96,70 @@ test('AstrBot proxy boundary returns a readable 503 when startup fails', async (
   assert.equal(response.status, 503)
   assert.equal(response.body.error, 'astrbot_unavailable')
   assert.match(response.body.detail, /connection refused/)
+})
+
+test('AstrBot dashboard mount rewrites root asset and API paths', () => {
+  const html = rewriteAstrbotMount(`<!doctype html><html><head>
+    <link rel="icon" href="/favicon.svg" />
+    <script type="module" src="/assets/index.js"></script>
+    <link rel="stylesheet" href="/assets/index.css">
+    <style>@font-face{src:url(/assets/font.woff2)}</style>
+    </head><body></body></html>`, 'text/html')
+  assert.match(html, /href="\/astrbot\/favicon.svg"/)
+  assert.match(html, /src="\/astrbot\/assets\/index.js"/)
+  assert.match(html, /href="\/astrbot\/assets\/index.css"/)
+  assert.match(html, /url\(\/astrbot\/assets\/font.woff2\)/)
+  assert.match(html, /localStorage.setItem\("token","chihiro"\)/)
+  assert.equal(rewriteAstrbotMount(html, 'text/html'), html)
+
+  const js = rewriteAstrbotMount([
+    'baseURL:"/api/v1"',
+    'return`/api/v1/chat`',
+    '`}//${host}/api/v1/live-chat/ws`',
+    'new Worker("/assets/editor.worker.js")',
+    'Bee=function(i){return"/"+i}',
+    'dashscope.aliyuncs.com/api/v1',
+  ].join('\n'), 'text/javascript')
+  assert.match(js, /baseURL:"\/astrbot\/api\/v1"/)
+  assert.match(js, /return`\/astrbot\/api\/v1\/chat`/)
+  assert.match(js, /\$\{host\}\/astrbot\/api\/v1\/live-chat\/ws/)
+  assert.match(js, /Worker\("\/astrbot\/assets\/editor.worker.js"\)/)
+  assert.match(js, /return"\/astrbot\/"\+i/)
+  assert.match(js, /dashscope.aliyuncs.com\/api\/v1/)
+  assert.equal(rewriteAstrbotLocation('/auth/login'), '/astrbot/auth/login')
+  assert.equal(rewriteAstrbotLocation('http://127.0.0.1:6185/assets/app.js'), '/astrbot/assets/app.js')
+})
+
+test('AstrBot dashboard proxy serves settings assets under /astrbot', async (t) => {
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/assets/app.js') {
+      res.writeHead(200, { 'content-type': 'text/javascript' })
+      res.end('fetch("/api/v1/configs")')
+      return
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end('<html><head><script type="module" src="/assets/app.js"></script></head><body>settings</body></html>')
+  })
+  const target = await listen(upstream)
+  const gateway = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://local')
+    if (url.pathname === '/astrbot' || url.pathname.startsWith('/astrbot/')) {
+      req.url = url.pathname + url.search
+      void forwardAstrbotDashboard(req, res, target)
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  const url = await listen(gateway)
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); upstream.closeAllConnections(); upstream.close() })
+  const page = await fetch(`${url}/astrbot/`)
+  const html = await page.text()
+  assert.equal(page.status, 200)
+  assert.match(html, /src="\/astrbot\/assets\/app.js"/)
+  const script = await fetch(`${url}/astrbot/assets/app.js`)
+  assert.equal(script.status, 200)
+  assert.equal(await script.text(), 'fetch("/astrbot/api/v1/configs")')
 })
 
 test('AstrBot WebSocket proxy boundary closes the socket when startup fails', async () => {

@@ -105,6 +105,25 @@
           <span>{{ tm("actions.newChat") }}</span>
         </v-btn>
 
+        <button
+          v-if="isChihiroHosted && isSidebarCollapsed"
+          class="new-chat-btn icon-only chat-sidebar-rail-btn"
+          type="button"
+          title="资料库"
+          @click="campaign.openLibrary()"
+        >
+          <FolderOpen :size="18" class="sidebar-action-icon" />
+        </button>
+        <v-btn
+          v-else-if="isChihiroHosted"
+          class="new-chat-btn"
+          variant="text"
+          @click="campaign.openLibrary()"
+        >
+          <FolderOpen :size="18" class="sidebar-action-icon mr-2" />
+          <span>资料库</span>
+        </v-btn>
+
       </div>
 
       <div v-if="!isSidebarCollapsed" class="sidebar-content">
@@ -114,6 +133,7 @@
           :loading-project-ids="loadingProjectSessionIds"
           :selected-project-id="selectedProjectId"
           :active-session-id="currSessionId"
+          :reveal-project-id="revealProjectId"
           :is-session-running="isSessionRunning"
           @create-project="openCreateProjectDialog"
           @edit-project="openEditProjectDialog"
@@ -121,20 +141,44 @@
           @toggle-project="handleProjectToggle"
           @select-project="selectProject"
           @select-session="selectProjectSession"
-          @edit-session-title="editProjectSessionTitle"
-          @delete-session="deleteProjectSession"
+          @start-chat="startProjectChat"
+          @rename-session="renameSidebarSession"
         />
 
         <section class="sidebar-section session-list">
           <div class="sidebar-section-header">
-            <span>{{ tm("conversation.title") }}</span>
+            <button
+              type="button"
+              class="section-toggle"
+              :aria-expanded="recentOpen"
+              @click="toggleRecent"
+            >
+              <span>{{ tm("conversation.title") }}</span>
+              <ChevronDown v-if="recentOpen" :size="14" class="section-chevron" />
+              <ChevronRight v-else :size="14" class="section-chevron" />
+            </button>
+            <span class="section-header-actions" @click.stop>
+              <v-btn
+                icon
+                size="x-small"
+                variant="text"
+                class="section-action-btn"
+                :title="tm('actions.newChat')"
+                :aria-label="tm('actions.newChat')"
+                @click="startNewChat"
+              >
+                <SquarePen :size="15" />
+              </v-btn>
+            </span>
           </div>
+          <template v-if="recentOpen">
           <div
-            v-for="session in sessions"
+            v-for="session in visibleSessions"
             :key="session.session_id"
             class="session-item"
             :class="{
               active: !isProviderWorkspace && currSessionId === session.session_id,
+              'is-pinned': isSessionPinned(session.session_id),
             }"
             role="button"
             tabindex="0"
@@ -142,27 +186,49 @@
             @keydown.enter="selectSession(session.session_id)"
             @keydown.space.prevent="selectSession(session.session_id)"
           >
-            <span class="session-title">{{ sessionTitle(session) }}</span>
+            <input
+              v-if="renamingSessionId === session.session_id"
+              ref="recentRenameInput"
+              v-model="renameDraft"
+              class="session-title-input"
+              :aria-label="tm('conversation.editDisplayName')"
+              @click.stop
+              @dblclick.stop
+              @keydown.enter.stop.prevent="commitRecentRename(session)"
+              @keydown.esc.stop.prevent="cancelRecentRename"
+              @blur="commitRecentRename(session)"
+            />
+            <span
+              v-else
+              class="session-title"
+              @dblclick.stop="beginRecentRename(session)"
+            >{{ sessionTitle(session) }}</span>
             <div class="session-actions" @click.stop>
               <v-btn
                 icon
                 size="x-small"
                 variant="text"
-                class="session-action-btn"
-                :title="tm('conversation.editDisplayName')"
-                @click="editSidebarSessionTitle(session)"
+                class="session-action-btn session-pin-btn"
+                :title="recentPinLabel(session.session_id)"
+                :aria-label="recentPinLabel(session.session_id)"
+                :aria-pressed="isSessionPinned(session.session_id)"
+                @click="toggleSessionPin(session.session_id)"
               >
-                <Pencil :size="15" />
+                <Pin
+                  :size="15"
+                  :fill="isSessionPinned(session.session_id) ? 'currentColor' : 'none'"
+                />
               </v-btn>
               <v-btn
                 icon
                 size="x-small"
                 variant="text"
-                class="session-action-btn"
-                :title="tm('actions.deleteChat')"
-                @click="deleteSidebarSession(session)"
+                class="session-action-btn session-archive-btn"
+                :title="tm('conversation.archive')"
+                :aria-label="tm('conversation.archive')"
+                @click="archiveSidebarSession(session.session_id)"
               >
-                <Trash2 :size="15" />
+                <Archive :size="15" />
               </v-btn>
             </div>
             <v-progress-circular
@@ -173,6 +239,7 @@
               width="2"
             />
           </div>
+          </template>
         </section>
       </div>
 
@@ -412,14 +479,15 @@
         :project="selectedProject"
         :sessions="projectSessions"
         @select-session="selectProjectSession"
-        @edit-session-title="editProjectSessionTitle"
-        @delete-session="deleteProjectSession"
+        @rename-session="renameSidebarSession"
       >
         <section class="project-composer-shell">
           <ChatInput
+            :key="currSessionId || 'draft'"
             ref="inputRef"
             v-model:prompt="draft"
             :staged-images-url="stagedImagesUrl"
+            :staged-image-files="stagedImageFiles"
             :staged-audio-url="stagedAudioUrl"
             :staged-files="stagedNonImageFiles"
             :disabled="sending"
@@ -434,7 +502,7 @@
             :reply-to="chatInputReplyTarget"
             :send-shortcut="sendShortcut"
             :show-provider-selector="true"
-            :placeholder="tm('input.projectPlaceholder')"
+            :placeholder="sessionSkills.active(currSessionId || '') ? '说说你想投放的人群' : tm('input.projectPlaceholder')"
             @send="sendCurrentMessage"
             @stop="stopCurrentSession"
             @toggle-streaming="toggleStreaming"
@@ -445,6 +513,7 @@
             @stop-recording="stopRecording"
             @paste-image="handlePaste"
             @file-select="handleFilesSelected"
+            @library-menu="openLibraryMenu"
             @clear-reply="replyTarget = null"
           />
         </section>
@@ -460,7 +529,7 @@
           class="messages-panel"
           @scroll="handleMessagesScroll"
         >
-          <div v-if="loadingMessages" class="center-state">
+          <div v-if="loadingMessages && !activeMessages.length" class="center-state">
             <v-progress-circular indeterminate size="32" width="3" />
           </div>
 
@@ -497,15 +566,18 @@
               @open-thread="openThreadPanel"
               @open-reasoning="openReasoningPanel"
               @open-refs="openRefsSidebar"
+              @library-menu="openLibraryMenu"
             />
           </div>
         </section>
 
         <section ref="composerShell" class="composer-shell">
           <ChatInput
+            :key="currSessionId || 'draft'"
             ref="inputRef"
             v-model:prompt="draft"
             :staged-images-url="stagedImagesUrl"
+            :staged-image-files="stagedImageFiles"
             :staged-audio-url="stagedAudioUrl"
             :staged-files="stagedNonImageFiles"
             :disabled="sending"
@@ -521,7 +593,7 @@
             :send-shortcut="sendShortcut"
             :show-provider-selector="true"
             :placeholder="
-              activeProject ? tm('input.projectPlaceholder') : undefined
+              sessionSkills.active(currSessionId || '') ? '说说你想投放的人群' : (activeProject ? tm('input.projectPlaceholder') : undefined)
             "
             @send="sendCurrentMessage"
             @stop="stopCurrentSession"
@@ -533,6 +605,7 @@
             @stop-recording="stopRecording"
             @paste-image="handlePaste"
             @file-select="handleFilesSelected"
+            @library-menu="openLibraryMenu"
             @clear-reply="replyTarget = null"
           />
         </section>
@@ -616,6 +689,17 @@
       :project-title="activeProject?.title || ''"
       @update:model-value="chatHeader.SET_WORKSPACE_FILES_OPEN"
     />
+    <LibraryDialog @pick="stageLibraryItem" @unpick="unstageLibrary" />
+    <div
+      v-if="libraryMenu"
+      ref="libraryMenuEl"
+      class="library-context-menu"
+      :style="{ left: `${libraryMenu.x}px`, top: `${libraryMenu.y}px` }"
+    >
+      <button type="button" :disabled="Boolean(libraryMenu.libraryId)" @click="confirmAddToLibrary">
+        {{ libraryMenu.libraryId ? '已在资料库' : '添加到资料库' }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -635,19 +719,21 @@ import { useWorkspace } from "@/modules/workspace/workspace";
 import { useDisplay } from "vuetify";
 import { isAxiosError } from "axios";
 import {
+  Archive,
   Box,
   Cable,
   Check,
+  ChevronDown,
   ChevronRight,
   EllipsisVertical,
   Languages,
+  FolderOpen,
   PanelLeft,
-  Pencil,
+  Pin,
   Settings,
   SquarePen,
-  Trash2,
 } from "@lucide/vue";
-import { chatApi, providerApi } from "@/modules/agent/native/src/api/v1";
+import { chatApi, fileApi, providerApi } from "@/modules/agent/native/src/api/v1";
 import StyledMenu from "@/modules/agent/native/src/components/shared/StyledMenu.vue";
 import ProjectDialog, {
   type ProjectFormData,
@@ -674,6 +760,7 @@ import {
 import { useMediaHandling } from "@/modules/agent/native/src/composables/useMediaHandling";
 import { useRecording } from "@/modules/agent/native/src/composables/useRecording";
 import { useProjects } from "@/modules/agent/native/src/composables/useProjects";
+import { useSidebarSessionFlags } from "@/modules/agent/native/src/use-sidebar-session-flags";
 import { useDragUpload } from "@/modules/agent/native/src/composables/useDragUpload";
 import { useChatHeaderStore } from "@/modules/agent/native/src/stores/chatHeader";
 import { useCustomizerStore } from "@/modules/agent/native/src/stores/customizer";
@@ -694,6 +781,9 @@ import {
 import { useToast } from "@/modules/agent/native/src/utils/toast";
 import UserChatHeader from "./UserChatHeader.vue";
 import { hostedAgentIdFromLocation, useAgentNavigation } from "@/modules/agent/native/src/navigation";
+import LibraryDialog from "@/modules/growth/LibraryDialog.vue";
+import { useGrowthCampaignStore, type LibraryItem } from "@/modules/growth/campaign-store";
+import { sessionSkills } from "@/modules/agent/session-skills";
 
 export type UserChatProps = {
   chatboxMode?: boolean;
@@ -710,6 +800,7 @@ const props = withDefaults(defineProps<UserChatProps>(), {
 });
 
 const workspace = useWorkspace();
+const campaign = useGrowthCampaignStore();
 const route = useRoute();
 const navigation = useAgentNavigation({ chatboxMode: props.chatboxMode });
 const isChihiroHosted = computed(() => props.chihiroHosted === true);
@@ -750,15 +841,19 @@ const {
 const {
   stagedFiles,
   stagedImagesUrl,
+  stagedImageFiles,
   stagedAudioUrl,
   stagedNonImageFiles,
   processAndUploadImage,
   processAndUploadFile,
+  stageExternal,
+  unstageLibrary,
   handlePaste,
   removeImage,
   removeAudio,
   removeFile,
   clearStaged,
+  replaceStaged,
   cleanupMediaCache,
 } = useMediaHandling();
 
@@ -784,6 +879,42 @@ const sessionTitleDraft = ref("");
 const editingSessionTitleId = ref("");
 const refreshProjectSessionsAfterTitleSave = ref(false);
 const savingSessionTitle = ref(false);
+const RECENT_SECTION_KEY = "chihiro-sidebar-recent-open";
+const recentOpen = ref(readRecentOpen());
+const draftProjectId = ref<string | null>(null);
+const revealProjectId = ref<string | null>(null);
+const renamingSessionId = ref("");
+const renameDraft = ref("");
+const recentRenameInput = ref<HTMLInputElement | null>(null);
+let recentRenameCanceled = false;
+const {
+  togglePin: toggleSessionPin,
+  archiveSession: archiveSidebarSession,
+  isPinned: isSessionPinned,
+  arrange: arrangeSessions,
+} = useSidebarSessionFlags();
+const visibleSessions = computed(() => arrangeSessions(sessions.value));
+
+function readRecentOpen() {
+  try {
+    return localStorage.getItem(RECENT_SECTION_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function toggleRecent() {
+  recentOpen.value = !recentOpen.value;
+  try {
+    localStorage.setItem(RECENT_SECTION_KEY, recentOpen.value ? "1" : "0");
+  } catch {
+    /* keep the in-memory choice when storage is unavailable */
+  }
+}
+
+function recentPinLabel(sessionId: string) {
+  return isSessionPinned(sessionId) ? tm("conversation.unpin") : tm("conversation.pin");
+}
 const messageEditDraft = ref("");
 const editingMessage = ref<ChatRecord | null>(null);
 const savingMessageEdit = ref(false);
@@ -810,6 +941,30 @@ const composerShell = ref<HTMLElement | null>(null);
 const inputRef = ref<InstanceType<typeof ChatInput> | null>(null);
 const shouldStickToBottom = ref(true);
 const replyTarget = ref<ChatRecord | null>(null);
+const stagedBySession = new Map<string, typeof stagedFiles.value>();
+let adoptEmptyComposer = false;
+watch(currSessionId, (next, prev) => {
+  if (prev === undefined) {
+    campaign.showSession(next || "");
+    return;
+  }
+  const from = prev || "";
+  const to = next || "";
+  replyTarget.value = null;
+  if (adoptEmptyComposer && !prev && next) {
+    adoptEmptyComposer = false;
+    campaign.rekey("", next);
+    sessionSkills.rekey("", next);
+    stagedBySession.set(next, stagedFiles.value.slice());
+    stagedBySession.delete("");
+    campaign.showSession(next);
+    return;
+  }
+  adoptEmptyComposer = false;
+  stagedBySession.set(from, stagedFiles.value.slice());
+  campaign.showSession(to);
+  replaceStaged((stagedBySession.get(to) || []).slice());
+}, { immediate: true });
 const threadPanelOpen = ref(false);
 const activeThread = ref<ChatThread | null>(null);
 const reasoningPanelOpen = ref(false);
@@ -1089,6 +1244,13 @@ watch(
 );
 
 onMounted(async () => {
+  document.addEventListener("pointerdown", onLibraryPointerDown);
+  if (props.chihiroHosted) {
+    await campaign.load();
+    restoreLibraryPreviews();
+  }
+  composerSyncReady = true;
+  syncStagedToCampaign();
   if (typeof ResizeObserver !== "undefined") {
     composerResizeObserver = new ResizeObserver(([entry]) => {
       const container = messagesContainer.value;
@@ -1117,9 +1279,15 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onLibraryPointerDown);
   composerResizeObserver?.disconnect();
   chatHeader.CLEAR_CONTEXT();
   cleanupMediaCache();
+});
+
+watch(stagedFiles, () => syncStagedToCampaign(), { deep: true });
+watch(() => campaign.active, (active) => {
+  if (active) syncStagedToCampaign();
 });
 
 watch(composerShell, (element, previousElement) => {
@@ -1237,9 +1405,24 @@ function formatUsagePercent(value: number) {
 async function startNewChat() {
   if (props.chihiroHosted) workspace.selectAgent('');
   showChatWorkspace();
+  draftProjectId.value = null;
   selectedProjectId.value = null;
   replyTarget.value = null;
   newChat();
+  closeMobileSidebar();
+  await focusChatInput();
+}
+
+async function startProjectChat(projectId: string) {
+  if (props.chihiroHosted) workspace.selectAgent("");
+  showChatWorkspace();
+  draftProjectId.value = projectId;
+  revealProjectId.value = projectId;
+  selectedProjectId.value = null;
+  currSessionId.value = "";
+  replyTarget.value = null;
+  newChat();
+  await navigation.openSessionList();
   closeMobileSidebar();
   await focusChatInput();
 }
@@ -1259,6 +1442,7 @@ function openEditProjectDialog(project: Project) {
 async function selectProject(projectId: string) {
   if (props.chihiroHosted) workspace.selectAgent('');
   showChatWorkspace();
+  draftProjectId.value = null;
   selectedProjectId.value = projectId;
   currSessionId.value = "";
   replyTarget.value = null;
@@ -1359,6 +1543,48 @@ function editSidebarSessionTitle(session: Session) {
   openSessionTitleDialog(session.session_id, session.display_name || "");
 }
 
+async function beginRecentRename(session: Session) {
+  recentRenameCanceled = false;
+  renamingSessionId.value = session.session_id;
+  renameDraft.value = session.display_name || "";
+  await nextTick();
+  const input = Array.isArray(recentRenameInput.value)
+    ? recentRenameInput.value[0]
+    : recentRenameInput.value;
+  input?.focus();
+  input?.select();
+}
+
+function cancelRecentRename() {
+  recentRenameCanceled = true;
+  renamingSessionId.value = "";
+}
+
+async function commitRecentRename(session: Session) {
+  if (recentRenameCanceled) {
+    recentRenameCanceled = false;
+    return;
+  }
+  if (renamingSessionId.value !== session.session_id) return;
+  const title = renameDraft.value.trim();
+  renamingSessionId.value = "";
+  if ((session.display_name || "") === title) return;
+  await renameSidebarSession(session.session_id, title);
+}
+
+async function renameSidebarSession(sessionId: string, title: string) {
+  await chatApi.updateSession(sessionId, { display_name: title });
+  updateSessionTitle(sessionId, title);
+  const projectSession = projectSessions.value.find(
+    (session) => session.session_id === sessionId,
+  );
+  if (projectSession) projectSession.display_name = title;
+  Object.values(projectSessionsById.value).forEach((projectSessionList) => {
+    const cached = projectSessionList.find((session) => session.session_id === sessionId);
+    if (cached) cached.display_name = title;
+  });
+}
+
 async function deleteSidebarSession(session: Session) {
   if (!(await askForConfirmation(tm("conversation.confirmDelete"), confirmDialog, {
     title: tm("conversation.confirmDeleteTitle"),
@@ -1376,22 +1602,6 @@ async function deleteSidebarSession(session: Session) {
 async function selectProjectSession(sessionId: string) {
   selectedProjectId.value = null;
   await selectSession(sessionId);
-}
-
-async function editProjectSessionTitle(sessionId: string, title: string) {
-  openSessionTitleDialog(sessionId, title, true);
-}
-
-async function deleteProjectSession(
-  sessionId: string,
-  projectId = selectedProjectId.value,
-) {
-  await deleteSession(sessionId);
-  if (projectId) {
-    await loadProjectSessions(projectId);
-  } else {
-    await loadProjectSessions();
-  }
 }
 
 async function saveProject(formData: ProjectFormData, projectId?: string) {
@@ -1435,6 +1645,7 @@ watch(projectDialogOpen, (open) => {
 
 async function selectSession(sessionId: string, pushRoute = true) {
   showChatWorkspace();
+  draftProjectId.value = null;
   selectedProjectId.value = null;
   currSessionId.value = sessionId;
   if (props.chihiroHosted) workspace.selectAgent(sessionId);
@@ -1459,10 +1670,19 @@ async function sendCurrentMessage() {
     const draftKey = currSessionId.value;
     const text = draft.value.trim();
     let sessionId = currSessionId.value;
-    const targetProjectId = selectedProjectId.value;
-    const targetProject = selectedProject.value;
+    const targetProjectId = selectedProjectId.value || draftProjectId.value;
+    const targetProject =
+      selectedProject.value ||
+      projects.value.find((project) => project.project_id === targetProjectId) ||
+      null;
     if (!sessionId) {
-      sessionId = await newSession();
+      adoptEmptyComposer = true;
+      try {
+        sessionId = await newSession();
+      } catch (error) {
+        adoptEmptyComposer = false;
+        throw error;
+      }
       if (targetProjectId) {
         await addSessionToProject(sessionId, targetProjectId);
         sessionProjects[sessionId] = targetProject
@@ -1473,12 +1693,16 @@ async function sendCurrentMessage() {
             }
           : null;
         await loadProjectSessions(targetProjectId);
+        revealProjectId.value = targetProjectId;
+        draftProjectId.value = null;
         selectedProjectId.value = null;
       }
       // 关联项目后再刷新，否则新会话会短暂出现在"对话"列表
       await getSessions();
     }
+    sessionSkills.rekey("", sessionId);
 
+    await ensureOutgoingAttachments();
     const messageId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     const outgoingParts = buildOutgoingParts(text);
     const selection = getSelectedProviderSelection();
@@ -1496,7 +1720,6 @@ async function sendCurrentMessage() {
     replyTarget.value = null;
     clearStaged({ revokeUrls: false });
     scrollToBottom();
-
     sendMessageStream({
       sessionId,
       messageId,
@@ -1507,12 +1730,33 @@ async function sendCurrentMessage() {
       selectedModel: selection?.modelName || "",
       userRecord,
       botRecord,
+      skillPrompt: sessionSkills.prompt(sessionId),
     });
   } catch (error) {
     console.error("Failed to send message:", error);
   } finally {
     sending.value = false;
     await focusChatInput();
+  }
+}
+
+async function ensureOutgoingAttachments() {
+  for (const file of stagedFiles.value) {
+    if (file.attachment_id && !file.attachment_id.startsWith("library:")) continue;
+    const blob = file.sourceFile || await fetch(file.url).then((response) => response.ok ? response.blob() : null).catch(() => null);
+    if (!blob) continue;
+    const formData = new FormData();
+    formData.append("file", blob, file.original_name || file.filename || "attachment");
+    try {
+      const response = await fileApi.upload(formData);
+      const uploaded = response.data?.data;
+      if (!uploaded?.attachment_id) continue;
+      file.attachment_id = uploaded.attachment_id;
+      if (uploaded.filename) file.filename = uploaded.filename;
+      if (uploaded.type) file.type = uploaded.type;
+    } catch (error) {
+      console.error("Failed to attach file:", error);
+    }
   }
 }
 
@@ -1529,6 +1773,7 @@ function buildOutgoingParts(text: string): MessagePart[] {
     parts.push({ type: "plain", text });
   }
   stagedFiles.value.forEach((file) => {
+    if (!file.attachment_id || file.attachment_id.startsWith("library:")) return;
     parts.push({
       type: file.type,
       attachment_id: file.attachment_id,
@@ -1787,6 +2032,93 @@ function removeThreadFromMessages(threadId: string) {
       (thread) => thread.thread_id !== threadId,
     );
   }
+}
+
+const libraryMenu = ref<null | {
+  x: number;
+  y: number;
+  name: string;
+  url: string;
+  libraryId?: string;
+  file?: File;
+  stagedKey?: string;
+}>(null);
+const libraryMenuEl = ref<HTMLElement | null>(null);
+let composerSyncReady = false;
+
+function openLibraryMenu(payload: {
+  x: number;
+  y: number;
+  name: string;
+  url: string;
+  libraryId?: string;
+  file?: File;
+  stagedKey?: string;
+}) {
+  libraryMenu.value = {
+    ...payload,
+    x: Math.max(8, Math.min(payload.x, window.innerWidth - 160)),
+    y: Math.max(8, Math.min(payload.y, window.innerHeight - 52)),
+  };
+}
+
+function onLibraryPointerDown(event: PointerEvent) {
+  const target = event.target as Node | null;
+  if (!libraryMenu.value || !libraryMenuEl.value || !target) return;
+  if (!libraryMenuEl.value.contains(target)) libraryMenu.value = null;
+}
+
+async function confirmAddToLibrary() {
+  const menu = libraryMenu.value;
+  libraryMenu.value = null;
+  if (!menu || menu.libraryId) return;
+  try {
+    const blob = menu.file || await (await fetch(menu.url)).blob();
+    const item = await campaign.addBlobToLibrary(blob, menu.name);
+    if (!item) {
+      toast.error(campaign.error || "没有放进资料库");
+      return;
+    }
+    if (menu.stagedKey) {
+      const staged = stagedFiles.value.find((file) => (file.signature || file.libraryId || file.url) === menu.stagedKey);
+      if (staged) staged.libraryId = item.id;
+      syncStagedToCampaign();
+    }
+    toast.success("已加入资料库");
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : "没有放进资料库");
+  }
+}
+
+function stageLibraryItem(item: LibraryItem) {
+  stageExternal({
+    url: campaign.fileUrl(item.id),
+    name: item.name,
+    type: item.kind === "video" ? "video" : "image",
+    libraryId: item.id,
+  });
+}
+
+function restoreLibraryPreviews() {
+  const brief = campaign.brief;
+  if (!brief) return;
+  for (const id of [...brief.commentImageIds, ...brief.referenceIds]) {
+    const item = campaign.items.find((entry) => entry.id === id);
+    if (item) stageLibraryItem(item);
+  }
+}
+
+function syncStagedToCampaign() {
+  if (!composerSyncReady || !campaign.active) return;
+  if (campaign.sessionId && campaign.sessionId !== currSessionId.value) return;
+  campaign.syncComposerFiles(stagedFiles.value.map((file) => ({
+    key: file.signature || file.libraryId || file.url,
+    name: file.original_name || file.filename,
+    mime: file.sourceFile?.type || "",
+    kind: file.type === "image" ? "image" as const : file.type === "video" ? "video" as const : "file" as const,
+    libraryId: file.libraryId,
+    file: file.sourceFile,
+  })));
 }
 
 async function handleFilesSelected(files: FileList | File[]) {
@@ -2133,6 +2465,38 @@ async function stopCurrentSession() {
   background: var(--chat-session-active-bg);
 }
 
+.library-context-menu {
+  position: fixed;
+  z-index: 4000;
+  min-width: 140px;
+  padding: 6px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 12px;
+  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 86%, rgb(var(--v-theme-on-surface)) 14%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.library-context-menu button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.library-context-menu button:hover:not(:disabled) {
+  background: rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.library-context-menu button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .sidebar-workspace-btn--active {
   background: var(--chat-session-active-bg);
   color: rgb(var(--v-theme-on-surface));
@@ -2152,13 +2516,57 @@ async function stopCurrentSession() {
 }
 
 .sidebar-section-header {
-  min-height: 24px;
+  min-height: 28px;
   display: flex;
   align-items: center;
-  padding: 0 10px 4px;
+  gap: 8px;
+  padding: 0 4px 4px 10px;
   color: var(--chat-section-label);
   font-size: 12px;
   font-weight: 500;
+}
+
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.section-chevron {
+  flex: 0 0 auto;
+  color: var(--chat-muted);
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-section-header:hover .section-header-actions,
+.sidebar-section-header:focus-within .section-header-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.section-action-btn {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  color: var(--chat-muted);
+}
+
+.sidebar-more-delete {
+  color: rgb(var(--v-theme-error));
 }
 
 .session-list {
@@ -2178,7 +2586,7 @@ async function stopCurrentSession() {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 56px 4px 10px;
+  padding: 4px 64px 4px 10px;
   position: relative;
   box-sizing: border-box;
   cursor: pointer;
@@ -2190,7 +2598,8 @@ async function stopCurrentSession() {
   background: var(--chat-session-active-bg);
 }
 
-.session-title {
+.session-title,
+.session-title-input {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -2198,6 +2607,15 @@ async function stopCurrentSession() {
   white-space: nowrap;
   font-size: 14px;
   font-weight: 500;
+}
+
+.session-title-input {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  outline: none;
 }
 
 .session-progress {
@@ -2226,14 +2644,28 @@ async function stopCurrentSession() {
 }
 
 .session-item:hover .session-actions,
-.session-item:focus-within .session-actions {
+.session-item:focus-within .session-actions,
+.session-item.is-pinned .session-actions {
   opacity: 1;
   pointer-events: auto;
   visibility: visible;
 }
 
+.session-item.is-pinned:not(:hover):not(:focus-within) .session-actions {
+  pointer-events: none;
+}
+
+.session-item.is-pinned:not(:hover):not(:focus-within) .session-pin-btn {
+  pointer-events: auto;
+}
+
+.session-item.is-pinned:not(:hover):not(:focus-within) .session-archive-btn {
+  opacity: 0;
+}
+
 .session-item:hover .session-progress,
-.session-item:focus-within .session-progress {
+.session-item:focus-within .session-progress,
+.session-item.is-pinned .session-progress {
   opacity: 0;
   visibility: hidden;
 }
@@ -2244,6 +2676,18 @@ async function stopCurrentSession() {
 
 .session-action-btn:hover {
   color: rgb(var(--v-theme-on-surface));
+}
+
+@media (hover: none) {
+  .section-header-actions,
+  .session-actions,
+  .session-archive-btn,
+  .session-item.is-pinned:not(:hover):not(:focus-within) .session-actions,
+  .session-item.is-pinned:not(:hover):not(:focus-within) .session-archive-btn {
+    opacity: 1;
+    pointer-events: auto;
+    visibility: visible;
+  }
 }
 
 .sidebar-footer {
