@@ -166,7 +166,7 @@
                 <v-icon icon="mdi-comment-text-outline" size="20"></v-icon>
               </template>
               <v-list-item-title>营销获客</v-list-item-title>
-              <v-list-item-subtitle>把这个技能挂到当前对话</v-list-item-subtitle>
+              <v-list-item-subtitle>进入正在发生的讨论，把价值交给正在问的人</v-list-item-subtitle>
               <template v-if="skillOn" v-slot:append>
                 <v-icon icon="mdi-check" size="18" color="primary"></v-icon>
               </template>
@@ -369,8 +369,8 @@ import ProviderModelMenu from "./ProviderModelMenu.vue";
 import StyledMenu from "@/modules/agent/native/src/components/shared/StyledMenu.vue";
 import CommandSuggestion from "./CommandSuggestion.vue";
 import { attachmentPresentation } from "./attachmentPresentation";
-import CampaignComposer from "@/modules/growth/CampaignComposer.vue";
-import { useGrowthCampaignStore } from "@/modules/growth/campaign-store";
+import CampaignComposer from "@/modules/outreach/components/CampaignComposer.vue";
+import { useOutreachCampaignStore } from "@/modules/outreach/stores/campaign";
 import { sessionSkills } from "@/modules/agent/session-skills";
 import type { Session } from "@/modules/agent/native/src/composables/useSessions";
 import type { SuggestionCommand } from "./CommandSuggestion.vue";
@@ -448,7 +448,7 @@ const emit = defineEmits<{
 }>();
 
 const { tm } = useModuleI18n("features/chat");
-const campaign = useGrowthCampaignStore();
+const campaign = useOutreachCampaignStore();
 const skillOn = computed(() => sessionSkills.active(props.sessionId || ""));
 const composerMenu = ref(false);
 const isDark = computed(

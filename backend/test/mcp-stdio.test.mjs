@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-const growthServer = fileURLToPath(new URL('../src/mcp/growth-server.mjs', import.meta.url))
+const outreachServer = fileURLToPath(new URL('../src/mcp/outreach-server.mjs', import.meta.url))
 const qqServer = fileURLToPath(new URL('../src/mcp/server.mjs', import.meta.url))
 
 function spawnServer(script) {
@@ -93,8 +93,8 @@ async function stop(child) {
   })
 }
 
-test('growth server answers newline JSON-RPC with only the three growth tools', async () => {
-  const child = spawnServer(growthServer)
+test('outreach server answers newline JSON-RPC with only the three outreach tools', async () => {
+  const child = spawnServer(outreachServer)
   const read = lineReader(child.stdout)
   try {
     child.stdin.write(`${JSON.stringify({
@@ -108,12 +108,12 @@ test('growth server answers newline JSON-RPC with only the three growth tools', 
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`)
     const listed = JSON.parse(await read())
-    assert.deepEqual(listed.result.tools.map((tool) => tool.name), ['growth_schema', 'growth_draft', 'growth_get'])
+    assert.deepEqual(listed.result.tools.map((tool) => tool.name), ['outreach_schema', 'outreach_draft', 'outreach_get'])
     child.stdin.write(`${JSON.stringify({
       jsonrpc: '2.0',
       id: 3,
       method: 'tools/call',
-      params: { name: 'growth_schema', arguments: {} },
+      params: { name: 'outreach_schema', arguments: {} },
     })}\n`)
     const called = JSON.parse(await read())
     const payload = JSON.parse(called.result.content[0].text)
@@ -124,7 +124,7 @@ test('growth server answers newline JSON-RPC with only the three growth tools', 
   }
 })
 
-test('qq server still answers Content-Length and lists underscore growth tools', async () => {
+test('qq server still answers Content-Length and lists underscore outreach tools', async () => {
   const child = spawnServer(qqServer)
   const read = contentReader(child.stdout)
   try {
@@ -136,13 +136,13 @@ test('qq server still answers Content-Length and lists underscore growth tools',
     }))
     const init = JSON.parse(await read())
     assert.equal(init.result.protocolVersion, '2024-11-05')
-    assert.match(init.result.instructions, /growth_schema/)
+    assert.match(init.result.instructions, /outreach_schema/)
     child.stdin.write(frame({ jsonrpc: '2.0', id: 2, method: 'tools/list' }))
     const names = JSON.parse(await read()).result.tools.map((tool) => tool.name)
     assert.equal(names.includes('observe'), true)
-    assert.equal(names.includes('growth_schema'), true)
-    assert.equal(names.includes('growth.schema'), false)
-    assert.equal(names.includes('growth_start'), false)
+    assert.equal(names.includes('outreach_schema'), true)
+    assert.equal(names.includes('outreach.schema'), false)
+    assert.equal(names.includes('outreach_start'), false)
   } finally {
     await stop(child)
   }

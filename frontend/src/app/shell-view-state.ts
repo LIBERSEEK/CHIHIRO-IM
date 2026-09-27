@@ -21,7 +21,7 @@ export interface ShellViewState {
   loginNeedsRestart: boolean
   showLoginPanel: boolean
   showEmptyLauncher: boolean
-  loginKind: 'qq' | 'douyin'
+  loginKind: 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili'
   loginMessage: string
 }
 
@@ -52,25 +52,29 @@ export function resolveShellViewState(input: ShellViewStateInput): ShellViewStat
 }
 
 /** A QQ login in progress stays a QQ card, even if the selected account is Douyin. */
-export function resolveLoginKind(input: ShellViewStateInput): 'qq' | 'douyin' {
-  const qqLogin = input.loginClient !== 'douyin' && (
+export function resolveLoginKind(input: ShellViewStateInput): 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili' {
+  const browserClient = input.loginClient === 'douyin' || input.loginClient === 'xiaohongshu' || input.loginClient === 'bilibili'
+  const qqLogin = !browserClient && (
     input.adding || input.pendingAdd || input.runtimePhase === 'starting' || input.runtimePhase === 'qr' || input.runtimePhase === 'qr_expired'
   )
   if (qqLogin) return 'qq'
+  if (input.loginClient === 'bilibili' || input.activeAccount?.platform === 'bilibili') return 'bilibili'
+  if (input.loginClient === 'xiaohongshu' || input.activeAccount?.platform === 'xiaohongshu') return 'xiaohongshu'
   if (input.loginClient === 'douyin' || input.activeAccount?.platform === 'douyin' || input.runtimePhase === 'browser_setup') {
     return 'douyin'
   }
   return 'qq'
 }
 
-function resolveLoginMessage(input: ShellViewStateInput, loginInProgress: boolean, kind: 'qq' | 'douyin'): string {
+function resolveLoginMessage(input: ShellViewStateInput, loginInProgress: boolean, kind: 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili'): string {
   if (input.cancelingLogin) return '正在取消登录…'
-  if (input.pendingAdd || (kind === 'douyin' && loginInProgress)) {
-    if (kind === 'douyin') {
-      if (input.runtimePhase === 'logging_in') return input.runtimeMessage || '请在弹出的 Chrome 中登录抖音'
+  if (input.pendingAdd || ((kind === 'douyin' || kind === 'xiaohongshu' || kind === 'bilibili') && loginInProgress)) {
+    if (kind === 'douyin' || kind === 'xiaohongshu' || kind === 'bilibili') {
+      const name = kind === 'xiaohongshu' ? '小红书' : kind === 'bilibili' ? '哔哩哔哩' : '抖音'
+      if (input.runtimePhase === 'logging_in') return input.runtimeMessage || `请在弹出的 Chrome 中登录${name}`
       return input.runtimeMessage && !input.runtimeMessage.startsWith('已登录')
         ? input.runtimeMessage
-        : '选择本机 Chrome，然后登录抖音账号'
+        : `选择本机 Chrome，然后登录${name}账号`
     }
     if (input.qrReady) return input.runtimeMessage || '请使用 QQ 扫描二维码。约两分钟有效。'
     return input.runtimeMessage && !input.runtimeMessage.startsWith('已登录')

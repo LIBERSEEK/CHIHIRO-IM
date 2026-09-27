@@ -1,6 +1,8 @@
 import type { AccountContext } from '@/contracts'
 import qqSvg from 'simple-icons/icons/qq.svg?raw'
 import tiktokSvg from 'simple-icons/icons/tiktok.svg?raw'
+import xiaohongshuSvg from 'simple-icons/icons/xiaohongshu.svg?raw'
+import bilibiliSvg from 'simple-icons/icons/bilibili.svg?raw'
 
 export interface AccountMenuPosition {
   x: number
@@ -8,6 +10,8 @@ export interface AccountMenuPosition {
 }
 
 export function accountPlatformLabel(platform: AccountContext['platform']): string {
+  if (platform === 'bilibili') return '哔哩哔哩'
+  if (platform === 'xiaohongshu') return '小红书'
   if (platform === 'douyin') return '抖音'
   if (platform === 'qq') return 'QQ'
   return platform
@@ -85,7 +89,7 @@ export function shouldShowBotBadge(account: AccountContext): boolean {
 }
 
 export type AccountPlatformBrand = {
-  platform: 'qq' | 'douyin'
+  platform: 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili'
   slug: string
   title: string
   hex: string
@@ -114,13 +118,31 @@ const DOUYIN_BRAND: AccountPlatformBrand = {
   path: simpleIconPath(tiktokSvg),
 }
 
+const XHS_BRAND: AccountPlatformBrand = {
+  platform: 'xiaohongshu',
+  slug: 'xiaohongshu',
+  title: '小红书',
+  hex: 'FF2442',
+  path: simpleIconPath(xiaohongshuSvg),
+}
+
+const BILIBILI_BRAND: AccountPlatformBrand = {
+  platform: 'bilibili',
+  slug: 'bilibili',
+  title: '哔哩哔哩',
+  hex: '00AEEC',
+  path: simpleIconPath(bilibiliSvg),
+}
+
 export function accountPlatformBrand(platform: AccountContext['platform']): AccountPlatformBrand | null {
   if (platform === 'qq') return QQ_BRAND
   if (platform === 'douyin') return DOUYIN_BRAND
+  if (platform === 'xiaohongshu') return XHS_BRAND
+  if (platform === 'bilibili') return BILIBILI_BRAND
   return null
 }
 
-export function accountPlatformBadge(platform: AccountContext['platform']): 'qq' | 'douyin' | null {
+export function accountPlatformBadge(platform: AccountContext['platform']): 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili' | null {
   return accountPlatformBrand(platform)?.platform ?? null
 }
 
@@ -128,8 +150,8 @@ export function canOpenNapCatSettings(account: AccountContext): boolean {
   return account.platform === 'qq'
 }
 
-export function canOpenGrowthSettings(account: AccountContext): boolean {
-  return account.platform === 'douyin'
+export function canOpenOutreachSettings(account: AccountContext): boolean {
+  return account.platform === 'douyin' || account.platform === 'xiaohongshu' || account.platform === 'bilibili'
 }
 
 export function clampAccountMenuPosition(clientX: number, clientY: number, viewport: { width: number; height: number }): AccountMenuPosition {

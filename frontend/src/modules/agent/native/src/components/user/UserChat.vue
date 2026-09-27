@@ -502,7 +502,7 @@
             :reply-to="chatInputReplyTarget"
             :send-shortcut="sendShortcut"
             :show-provider-selector="true"
-            :placeholder="sessionSkills.active(currSessionId || '') ? '说说你想投放的人群' : tm('input.projectPlaceholder')"
+            :placeholder="sessionSkills.engaged(currSessionId || '') ? '说说你想投放的人群' : tm('input.projectPlaceholder')"
             @send="sendCurrentMessage"
             @stop="stopCurrentSession"
             @toggle-streaming="toggleStreaming"
@@ -593,7 +593,7 @@
             :send-shortcut="sendShortcut"
             :show-provider-selector="true"
             :placeholder="
-              sessionSkills.active(currSessionId || '') ? '说说你想投放的人群' : (activeProject ? tm('input.projectPlaceholder') : undefined)
+              sessionSkills.engaged(currSessionId || '') ? '说说你想投放的人群' : (activeProject ? tm('input.projectPlaceholder') : undefined)
             "
             @send="sendCurrentMessage"
             @stop="stopCurrentSession"
@@ -781,8 +781,8 @@ import {
 import { useToast } from "@/modules/agent/native/src/utils/toast";
 import UserChatHeader from "./UserChatHeader.vue";
 import { hostedAgentIdFromLocation, useAgentNavigation } from "@/modules/agent/native/src/navigation";
-import LibraryDialog from "@/modules/growth/LibraryDialog.vue";
-import { useGrowthCampaignStore, type LibraryItem } from "@/modules/growth/campaign-store";
+import LibraryDialog from "@/modules/outreach/components/LibraryDialog.vue";
+import { useOutreachCampaignStore, type LibraryItem } from "@/modules/outreach/stores/campaign";
 import { sessionSkills } from "@/modules/agent/session-skills";
 
 export type UserChatProps = {
@@ -800,7 +800,7 @@ const props = withDefaults(defineProps<UserChatProps>(), {
 });
 
 const workspace = useWorkspace();
-const campaign = useGrowthCampaignStore();
+const campaign = useOutreachCampaignStore();
 const route = useRoute();
 const navigation = useAgentNavigation({ chatboxMode: props.chatboxMode });
 const isChihiroHosted = computed(() => props.chihiroHosted === true);

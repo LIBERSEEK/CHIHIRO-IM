@@ -40,6 +40,17 @@ const textFields = computed(() => fields.value.filter((field) => field.type !== 
 const interactionField = computed(() => fields.value.find((field) => field.key === 'interaction'))
 const countField = computed(() => fields.value.find((field) => field.key === 'maxCount'))
 const formField = computed(() => fields.value.find((field) => field.key === 'form'))
+const platformField = computed(() => fields.value.find((field) => field.key === 'platform') || {
+  key: 'platform',
+  label: '平台',
+  type: 'enum' as const,
+  options: [
+    { value: 'douyin', label: '抖音' },
+    { value: 'xiaohongshu', label: '小红书' },
+    { value: 'bilibili', label: '哔哩哔哩' },
+  ],
+})
+const cardPlatform = computed(() => value.value.platform === 'xiaohongshu' || value.value.platform === 'bilibili' ? value.value.platform : 'douyin')
 const startAction = computed(() => props.card.actions?.find((action) => action.id === 'start') || null)
 const locked = computed(() => serverStatus.value === 'started' || !startAction.value)
 const showImages = computed(() => value.value.form === 'image')
@@ -132,7 +143,7 @@ function rememberedImages() {
 async function hydrate() {
   hydrating.value = true
   try {
-    const response = await fetch(`/api/runtime/growth/brief?id=${encodeURIComponent(props.card.draftId)}`, { cache: 'no-store' })
+    const response = await fetch(`/api/runtime/outreach/brief?id=${encodeURIComponent(props.card.draftId)}`, { cache: 'no-store' })
     if (!response.ok) return
     const body = await response.json().catch(() => ({})) as { brief?: Record<string, unknown> }
     const brief = body.brief
@@ -151,6 +162,9 @@ async function hydrate() {
       commentImageIds: imageIds.value,
       commentProvider: typeof brief.commentProvider === 'string' ? brief.commentProvider : value.value.commentProvider,
       commentModel: typeof brief.commentModel === 'string' ? brief.commentModel : value.value.commentModel,
+      platform: brief.platform === 'xiaohongshu' || brief.platform === 'bilibili' || brief.platform === 'douyin'
+        ? brief.platform
+        : (value.value.platform === 'xiaohongshu' || value.value.platform === 'bilibili' ? value.value.platform : 'douyin'),
     }
   } finally {
     hydrating.value = false
@@ -262,7 +276,7 @@ function removeImage(id: string) {
 async function save() {
   if (locked.value || hydrating.value) return
   error.value = ''
-  const response = await fetch('/api/runtime/growth/brief', {
+  const response = await fetch('/api/runtime/outreach/brief', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -293,7 +307,7 @@ function missingRequired() {
 async function start() {
   const action = startAction.value
   if (!action || starting.value || locked.value || needsImage.value) return
-  if (!action.path.startsWith('/api/runtime/growth/')) {
+  if (!action.path.startsWith('/api/runtime/outreach/')) {
     error.value = '这张卡片没有可执行的启动动作'
     return
   }
@@ -307,7 +321,8 @@ async function start() {
         id: props.card.draftId,
         ...value.value,
         commentImageIds: imageIds.value,
-        accountId: shell.activeAccount?.platform === 'douyin' ? shell.activeAccount.id : '',
+        platform: cardPlatform.value,
+        accountId: shell.activeAccount?.platform === cardPlatform.value ? shell.activeAccount.id : '',
       }),
     })
     const body = await response.json().catch(() => ({})) as { needsLogin?: boolean; started?: boolean; accountId?: string; message?: string }
@@ -320,9 +335,10 @@ async function start() {
       }
       awaitingLogin = true
       sawLogin = false
-      notice.value = '登录抖音后会自动开始。取消登录的话，任务卡留在这里。'
+      const platformName = cardPlatform.value === 'xiaohongshu' ? '小红书' : cardPlatform.value === 'bilibili' ? '哔哩哔哩' : '抖音'
+      notice.value = `登录${platformName}后会自动开始。取消登录的话，任务卡留在这里。`
       if (body.accountId) await shell.reloginAccount(accountId(body.accountId))
-      else await shell.addAccount('douyin')
+      else await shell.addAccount(cardPlatform.value)
       return
     }
     if (!response.ok || !body.started) throw new Error(body.message || '没有启动')
@@ -331,7 +347,7 @@ async function start() {
     loginRetries = 0
     notice.value = ''
     if (body.accountId) shell.selectAccount(accountId(body.accountId))
-    workspace.growthChatRequest = true
+    workspace.outreachChatRequest = true
     workspace.selectList('messages')
     workspace.mobilePane = 'chat'
     void router.replace({ path: '/im' })
@@ -352,7 +368,7 @@ watch(
       return
     }
     if (!sawLogin) return
-    const online = shell.accounts.some((account) => account.platform === 'douyin' && account.status === 'online')
+    const online = shell.accounts.some((account) => account.platform === cardPlatform.value && account.status === 'online')
     if (!online) {
       awaitingLogin = false
       sawLogin = false
@@ -405,6 +421,14 @@ onMounted(() => {
       </label>
     </div>
     <div class="schema-controls">
+      <label class="schema-platform">
+        {{ platformField.label }}
+        <span class="schema-select">
+          <select :value="cardPlatform" :disabled="locked || hydrating" @change="chooseEnum(platformField, $event)">
+            <option v-for="option in platformField.options || []" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </span>
+      </label>
       <label v-if="interactionField">
         {{ interactionField.label }}
         <span class="schema-select">
@@ -537,6 +561,7 @@ onMounted(() => {
   gap: 6px 8px;
   align-items: end;
 }
+.schema-platform { grid-column: 1 / -1; }
 .schema-start,
 .schema-image-add {
   border: 1px solid rgba(var(--v-theme-on-surface), 0.16);

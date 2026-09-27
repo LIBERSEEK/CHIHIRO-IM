@@ -3,11 +3,11 @@ import path from 'node:path'
 import { CLIENTS, getClient } from './clients.mjs'
 import { createAccountStore } from './accounts.mjs'
 import { createQqRuntime } from './qq-napcat.mjs'
-import { createGrowthRuntime } from './growth.mjs'
-import { isDouyinAccountId } from './growth-ids.mjs'
+import { createOutreachRuntime } from './outreach/service.mjs'
+import { isBilibiliAccountId, isDouyinAccountId, isOutreachAccountId, isXiaohongshuAccountId, pickOutreachAccount } from './outreach/accounts/ids.mjs'
 import { createLibrary } from './library.mjs'
-import { briefPrompt, createBriefStore, settingsFromBrief, stageCommentImages, stageInlineImages, turnBrief } from './growth-brief.mjs'
-import { completeWithAstrbot } from './growth-model.mjs'
+import { briefPrompt, createBriefStore, settingsFromBrief, stageCommentImages, stageInlineImages, turnBrief } from './outreach/campaign/brief.mjs'
+import { completeWithAstrbot } from './outreach/campaign/model.mjs'
 import { createAstrbotRuntime } from './astrbot.mjs'
 import { createBotController } from './bot.mjs'
 import { createBotSuggest } from './bot-suggest.mjs'
@@ -33,13 +33,13 @@ export function createRuntime({ root, cfg, services = {} }) {
   })
   const astrbot = services.astrbot || createAstrbotRuntime({ root, cfg })
   const library = services.library || createLibrary(path.join(dataDir, 'library'))
-  const briefs = services.briefs || createBriefStore(path.join(dataDir, 'growth-briefs.json'))
-  const growth = services.growth || createGrowthRuntime({
+  const briefs = services.briefs || createBriefStore(path.join(dataDir, 'outreach-briefs.json'))
+  const outreach = services.outreach || createOutreachRuntime({
     root,
     store,
     emit: () => qq.touch?.(),
-    loginWaiter: services.growthLoginWaiter,
-    feedRunner: services.growthFeedRunner,
+    loginWaiter: services.outreachLoginWaiter,
+    feedRunner: services.outreachFeedRunner,
     complete: (prompt, sessionId, options) => services.complete
       ? services.complete(prompt, sessionId, options)
       : completeWithAstrbot(astrbot, prompt, { sessionId, provider: options?.provider, model: options?.model }),
@@ -77,7 +77,7 @@ export function createRuntime({ root, cfg, services = {} }) {
   }
 
   async function snapshot() {
-    const snap = growth.decorateSnapshot(qq.snapshot())
+    const snap = outreach.decorateSnapshot(qq.snapshot())
     snap.astrbot = await astrbot.refreshStatus()
     const wired = bot.wired
     for (const acc of snap.accounts?.accounts || []) {
@@ -141,8 +141,8 @@ export function createRuntime({ root, cfg, services = {} }) {
     if (p === '/api/runtime/accounts/remove' && method === 'POST') {
       const body = await readJson(req)
       if (!body.id) return json(res, { error: 'missing_id' }, 400)
-      if (isDouyinAccountId(body.id)) {
-        await growth.cleanup(body.id).catch((e) => logError('api', 'growth.cleanup', e))
+      if (isOutreachAccountId(body.id)) {
+        await outreach.cleanup(body.id).catch((e) => logError('api', 'outreach.cleanup', e))
         store.remove(body.id)
         return json(res, await snapshot())
       }
@@ -389,9 +389,9 @@ export function createRuntime({ root, cfg, services = {} }) {
 
     if (p === '/api/runtime/login/cancel' && method === 'POST') {
       try {
-        const current = growth.snapshotGrowth()
-        if (current.loginClient === 'douyin' && (current.pendingAdd || current.phase === 'logging_in' || current.phase === 'browser_setup')) {
-          await growth.cancelLogin()
+        const current = outreach.snapshotOutreach()
+        if (['douyin', 'xiaohongshu', 'bilibili'].includes(current.loginClient) && (current.pendingAdd || current.phase === 'logging_in' || current.phase === 'browser_setup')) {
+          await outreach.cancelLogin()
           return json(res, await snapshot())
         }
         const snap = await qq.cancelLogin()
@@ -416,11 +416,12 @@ export function createRuntime({ root, cfg, services = {} }) {
         }, 501)
       }
       log('api', `start client=${clientId} mode=${body.mode || '-'} uin=${body.uin || '-'}`)
-      if (clientId === 'douyin') {
-        const accountId = isDouyinAccountId(body.id)
-          ? body.id
-          : (body.uin ? `douyin:${body.uin}` : '')
-        growth.prepareNew(accountId)
+      if (clientId === 'douyin' || clientId === 'xiaohongshu' || clientId === 'bilibili') {
+        const valid = clientId === 'xiaohongshu'
+          ? isXiaohongshuAccountId(body.id)
+          : clientId === 'bilibili' ? isBilibiliAccountId(body.id) : isDouyinAccountId(body.id)
+        const accountId = valid ? body.id : ''
+        outreach.prepareNew(accountId, clientId)
         return json(res, await snapshot())
       }
       if (managesLocalQq) await prepareEnvironment('qq')
@@ -460,7 +461,7 @@ export function createRuntime({ root, cfg, services = {} }) {
       return json(res, { items: library.list() })
     }
 
-    if (p === '/api/runtime/growth/brief' && method === 'GET') {
+    if (p === '/api/runtime/outreach/brief' && method === 'GET') {
       const id = String(url.searchParams.get('id') || '').trim()
       if (id) {
         const brief = briefs.get(id)
@@ -470,12 +471,12 @@ export function createRuntime({ root, cfg, services = {} }) {
       return json(res, { brief: briefs.ensure(), items: library.list() })
     }
 
-    if (p === '/api/runtime/growth/brief' && method === 'POST') {
+    if (p === '/api/runtime/outreach/brief' && method === 'POST') {
       const body = await readJson(req)
       return json(res, { brief: briefs.put(body.brief || body) })
     }
 
-    if (p === '/api/runtime/growth/brief/turn' && method === 'POST') {
+    if (p === '/api/runtime/outreach/brief/turn' && method === 'POST') {
       try {
         const body = await readJson(req)
         const text = String(body.text || '').trim()
@@ -490,18 +491,18 @@ export function createRuntime({ root, cfg, services = {} }) {
         const names = [...draft.commentImageIds, ...draft.referenceIds]
           .map((id) => library.file(id)?.item?.name)
           .filter(Boolean)
-        const modelText = await completeWithAstrbot(astrbot, briefPrompt(draft, text, names), { sessionId: `growth-brief:${draft.id}` })
+        const modelText = await completeWithAstrbot(astrbot, briefPrompt(draft, text, names), { sessionId: `outreach-brief:${draft.id}` })
         return json(res, { brief: briefs.put(turnBrief(draft, text, modelText)) })
       } catch (e) {
         return json(res, { error: e.message, message: e.message }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/brief/start' && method === 'POST') {
+    if (p === '/api/runtime/outreach/brief/start' && method === 'POST') {
       try {
         const body = await readJson(req)
         const current = briefs.get(body.id) || briefs.ensure()
-        const saved = briefs.put({
+        const savedBase = briefs.put({
           ...current,
           ...(body.form === 'image' || body.form === 'text' ? { form: body.form } : {}),
           ...(typeof body.audience === 'string' ? { audience: body.audience } : {}),
@@ -517,27 +518,31 @@ export function createRuntime({ root, cfg, services = {} }) {
           ...(Array.isArray(body.referenceIds) ? { referenceIds: body.referenceIds } : {}),
           ...(typeof body.commentProvider === 'string' ? { commentProvider: body.commentProvider } : {}),
           ...(typeof body.commentModel === 'string' ? { commentModel: body.commentModel } : {}),
+          ...(body.platform === 'xiaohongshu' || body.platform === 'bilibili' || body.platform === 'douyin' ? { platform: body.platform } : {}),
           excludesAsked: true,
         })
+        const saved = savedBase
         if (!saved.tags.length || !saved.tone || !saved.offer || !saved.benefit) {
           return json(res, { error: '资料还没齐', message: '资料还没齐', brief: saved }, 400)
         }
-        const accounts = (store.list().accounts || []).filter((account) => isDouyinAccountId(account.id))
-        const preferred = accounts.find((account) => account.id === (body.accountId || saved.accountId))
-          || accounts.find((account) => growth.hasStorage(account.id))
-          || accounts[0]
-        if (!preferred || !growth.hasStorage(preferred.id)) {
+        const preferred = pickOutreachAccount(
+          store.list().accounts || [],
+          saved.platform,
+          body.accountId || saved.accountId,
+          (id) => outreach.hasStorage(id),
+        )
+        if (!preferred || !outreach.hasStorage(preferred.id)) {
           return json(res, { needsLogin: true, accountId: preferred?.id || '', brief: saved })
         }
         let imageDir = ''
         const inlineImages = Array.isArray(body.commentImageFiles) ? body.commentImageFiles : []
         if (saved.form === 'image' || inlineImages.length) {
-          imageDir = growth.commentImageDirectory(preferred.id, saved.id)
+          imageDir = outreach.commentImageDirectory(preferred.id, saved.id)
           const count = stageCommentImages(imageDir, saved.commentImageIds, (id) => library.file(id))
             + stageInlineImages(imageDir, inlineImages)
           if (!count) return json(res, { error: '请先选择评论配图', message: '请先选择评论配图', brief: saved }, 400)
         }
-        await growth.startTask(preferred.id, settingsFromBrief(saved, imageDir))
+        await outreach.startTask(preferred.id, settingsFromBrief(saved, imageDir))
         const started = briefs.put({ ...saved, status: 'started', accountId: preferred.id })
         return json(res, { started: true, accountId: preferred.id, brief: started, ...(await snapshot()) })
       } catch (e) {
@@ -545,39 +550,40 @@ export function createRuntime({ root, cfg, services = {} }) {
       }
     }
 
-    if (p === '/api/runtime/growth/browser' && method === 'POST') {
+    if (p === '/api/runtime/outreach/browser' && method === 'POST') {
       const body = await readJson(req)
       try {
-        const detected = growth.setBrowserPath(body.path || '')
+        const detected = outreach.setBrowserPath(body.path || '')
         return json(res, { ...detected, ...(await snapshot()) })
       } catch (e) {
         return json(res, { error: e.message, message: e.message }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/login' && method === 'POST') {
+    if (p === '/api/runtime/outreach/login' && method === 'POST') {
       const body = await readJson(req)
       try {
         const browserPath = body.browserPath || body.path || ''
-        if (browserPath) growth.setBrowserPath(browserPath)
-        const browser = growth.browserState()
+        if (browserPath) outreach.setBrowserPath(browserPath)
+        const browser = outreach.browserState()
         if (!browser.detected) {
           return json(res, { error: 'chrome_not_found', message: `找不到 Chrome：${browser.path || '未设置路径'}`, ...(await snapshot()) }, 400)
         }
-        growth.login({
+        outreach.login({
           accountId: body.id || body.accountId || '',
           browserPath,
-        }).catch((e) => logError('api', 'growth.login', e))
+          client: body.client || '',
+        }).catch((e) => logError('api', 'outreach.login', e))
         return json(res, await snapshot())
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    const growthAvatarMatch = p.match(/^\/api\/runtime\/growth\/accounts\/([^/]+)\/avatar$/)
-    if (growthAvatarMatch && method === 'GET') {
-      const id = decodePathPart(growthAvatarMatch[1])
-      const file = growth.readAvatar(id)
+    const outreachAvatarMatch = p.match(/^\/api\/runtime\/outreach\/accounts\/([^/]+)\/avatar$/)
+    if (outreachAvatarMatch && method === 'GET') {
+      const id = decodePathPart(outreachAvatarMatch[1])
+      const file = outreach.readAvatar(id)
       if (!file) {
         res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: 'avatar_not_found' }))
@@ -591,98 +597,98 @@ export function createRuntime({ root, cfg, services = {} }) {
       return true
     }
 
-    const growthImagesMatch = p.match(/^\/api\/runtime\/growth\/accounts\/([^/]+)\/comment-images$/)
-    if (growthImagesMatch && method === 'POST') {
-      const id = decodePathPart(growthImagesMatch[1])
+    const outreachImagesMatch = p.match(/^\/api\/runtime\/outreach\/accounts\/([^/]+)\/comment-images$/)
+    if (outreachImagesMatch && method === 'POST') {
+      const id = decodePathPart(outreachImagesMatch[1])
       try {
         const body = await readJson(req)
-        const saved = growth.saveCommentImages(id, body.groupId || body.id, body.type, body.files)
+        const saved = outreach.saveCommentImages(id, body.groupId || body.id, body.type, body.files)
         return json(res, { ...saved, ...(await snapshot()) })
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    const growthHistoryMatch = p.match(/^\/api\/runtime\/growth\/accounts\/([^/]+)\/history(?:\/([^/]+))?$/)
-    if (growthHistoryMatch && method === 'DELETE') {
-      const id = decodePathPart(growthHistoryMatch[1])
-      const taskId = growthHistoryMatch[2] ? decodePathPart(growthHistoryMatch[2]) : ''
+    const outreachHistoryMatch = p.match(/^\/api\/runtime\/outreach\/accounts\/([^/]+)\/history(?:\/([^/]+))?$/)
+    if (outreachHistoryMatch && method === 'DELETE') {
+      const id = decodePathPart(outreachHistoryMatch[1])
+      const taskId = outreachHistoryMatch[2] ? decodePathPart(outreachHistoryMatch[2]) : ''
       try {
         const account = taskId
-          ? growth.deleteTaskHistory(id, taskId)
-          : growth.clearTaskHistory(id)
+          ? outreach.deleteTaskHistory(id, taskId)
+          : outreach.clearTaskHistory(id)
         return json(res, { account, ...(await snapshot()) })
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    if (p.startsWith('/api/runtime/growth/accounts/') && method === 'GET') {
-      const rest = p.slice('/api/runtime/growth/accounts/'.length)
+    if (p.startsWith('/api/runtime/outreach/accounts/') && method === 'GET') {
+      const rest = p.slice('/api/runtime/outreach/accounts/'.length)
       if (rest.includes('/')) return json(res, { error: 'account_not_found' }, 404)
       const id = decodePathPart(rest)
-      const view = growth.accountView(id)
+      const view = outreach.accountView(id)
       if (!view) return json(res, { error: 'account_not_found' }, 404)
       return json(res, view)
     }
 
-    if (p.match(/^\/api\/runtime\/growth\/accounts\/[^/]+\/settings$/) && method === 'POST') {
+    if (p.match(/^\/api\/runtime\/outreach\/accounts\/[^/]+\/settings$/) && method === 'POST') {
       const id = decodePathPart(p.split('/')[5])
       try {
-        const settings = growth.writeSettings(id, await readJson(req))
+        const settings = outreach.writeSettings(id, await readJson(req))
         return json(res, { settings, ...(await snapshot()) })
       } catch (e) {
         return json(res, { error: e.message, message: e.message }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/task/start' && method === 'POST') {
+    if (p === '/api/runtime/outreach/task/start' && method === 'POST') {
       const body = await readJson(req)
       try {
-        await growth.startTask(body.accountId || body.id, body.settings || {})
+        await outreach.startTask(body.accountId || body.id, body.settings || {})
         return json(res, await snapshot())
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/task/stop' && method === 'POST') {
-      await growth.stopTask()
+    if (p === '/api/runtime/outreach/task/stop' && method === 'POST') {
+      await outreach.stopTask()
       return json(res, await snapshot())
     }
 
-    if (p === '/api/runtime/growth/task/pause' && method === 'POST') {
+    if (p === '/api/runtime/outreach/task/pause' && method === 'POST') {
       const body = await readJson(req)
       try {
-        await growth.setPaused(body.paused === true)
+        await outreach.setPaused(body.paused === true)
         return json(res, await snapshot())
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/preview/mode' && method === 'POST') {
+    if (p === '/api/runtime/outreach/preview/mode' && method === 'POST') {
       const body = await readJson(req)
       try {
-        await growth.setPreviewMode(body.mode)
+        await outreach.setPreviewMode(body.mode)
         return json(res, await snapshot())
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/preview/mute' && method === 'POST') {
+    if (p === '/api/runtime/outreach/preview/mute' && method === 'POST') {
       const body = await readJson(req)
       try {
-        await growth.setPreviewMuted(body.muted !== false)
+        await outreach.setPreviewMuted(body.muted !== false)
         return json(res, await snapshot())
       } catch (e) {
         return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
       }
     }
 
-    if (p === '/api/runtime/growth/preview.jpg' && method === 'GET') {
-      const jpeg = growth.previewFrame()
+    if (p === '/api/runtime/outreach/preview.jpg' && method === 'GET') {
+      const jpeg = outreach.previewFrame()
       if (!jpeg) {
         res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
         res.end(JSON.stringify({ error: 'no_preview' }))
@@ -693,7 +699,7 @@ export function createRuntime({ root, cfg, services = {} }) {
       return true
     }
 
-    if (p === '/api/runtime/growth/preview/stream' && method === 'GET') {
+    if (p === '/api/runtime/outreach/preview/stream' && method === 'GET') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
@@ -702,8 +708,8 @@ export function createRuntime({ root, cfg, services = {} }) {
       })
       const send = () => {
         try {
-          const jpeg = growth.previewFrame()
-          const preview = growth.snapshotGrowth().preview || {}
+          const jpeg = outreach.previewFrame()
+          const preview = outreach.snapshotOutreach().preview || {}
           res.write(`data: ${JSON.stringify({
             jpeg,
             mode: preview.mode || 'window',
@@ -713,7 +719,7 @@ export function createRuntime({ root, cfg, services = {} }) {
         } catch { /* closed */ }
       }
       send()
-      const unsub = growth.subscribePreview(send)
+      const unsub = outreach.subscribePreview(send)
       req.on('close', unsub)
       return true
     }
@@ -756,7 +762,7 @@ export function createRuntime({ root, cfg, services = {} }) {
       }
       send()
       const unsubQq = qq.subscribe(() => { send() })
-      const unsubGrowth = growth.subscribe(() => { send() })
+      const unsubOutreach = outreach.subscribe(() => { send() })
       const timer = setInterval(() => {
         qq.refreshPorts()
           .then(() => {
@@ -767,7 +773,7 @@ export function createRuntime({ root, cfg, services = {} }) {
       }, 1500)
       req.on('close', () => {
         unsubQq()
-        unsubGrowth()
+        unsubOutreach()
         clearInterval(timer)
       })
       return true
@@ -781,7 +787,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     await astrbot.stopIfOwned().catch((e) => logError('api', 'astrbot stop', e))
   }
 
-  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, growth, environment, prepareEnvironment, snapshot, shutdown }
+  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, outreach, environment, prepareEnvironment, snapshot, shutdown }
 }
 
 function json(res, obj, status = 200) {

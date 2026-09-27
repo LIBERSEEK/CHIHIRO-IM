@@ -6,9 +6,9 @@ import { SlidersHorizontal, Settings } from '@lucide/vue'
 import AccountProfilePop from '@/app/AccountProfilePop.vue'
 import AccountPlatformBadge from '@/app/AccountPlatformBadge.vue'
 import ExternalSettingsDialog from '@/app/ExternalSettingsDialog.vue'
-import GrowthSettingsDialog from '@/app/GrowthSettingsDialog.vue'
-import GrowthPip from '@/modules/growth/GrowthPip.vue'
-import GrowthLoginPanel from '@/modules/growth/GrowthLoginPanel.vue'
+import OutreachSettingsDialog from '@/app/OutreachSettingsDialog.vue'
+import OutreachPip from '@/modules/outreach/components/OutreachPip.vue'
+import OutreachLoginPanel from '@/modules/outreach/components/OutreachLoginPanel.vue'
 import { useAssistantStore } from '@/modules/assistant/session'
 import { useSuggestStore } from '@/modules/assistant/suggest'
 import { useShellStore } from '@/stores/shell'
@@ -22,7 +22,7 @@ import {
   accountTitle,
   accountUnreadLabel,
   canCloseExitDialog,
-  canOpenGrowthSettings,
+  canOpenOutreachSettings,
   canOpenNapCatSettings,
   clampAccountMenuPosition,
   shouldCloseExitDialogForKey,
@@ -39,7 +39,7 @@ const route = useRoute()
 const router = useRouter()
 const settingsOpen = ref(false)
 const externalSettings = ref<{ title: string; src: string } | null>(null)
-const growthSettings = ref<{ title: string } | null>(null)
+const outreachSettings = ref<{ title: string } | null>(null)
 const accountMenu = ref<{ account: AccountContext; x: number; y: number } | null>(null)
 const accountProfile = ref<{ account: AccountContext; anchor: DOMRect } | null>(null)
 const exitAccount = ref<AccountContext | null>(null)
@@ -130,7 +130,7 @@ function relogin(account: AccountContext, refreshQr = false) {
 }
 async function loginDouyin(path = '') {
   try {
-    await shell.loginGrowthAccount(path || shell.browserPath)
+    await shell.loginOutreachAccount(path || shell.browserPath)
   } catch (cause) {
     shell.error = cause instanceof Error ? cause.message : '无法登录抖音'
   }
@@ -169,11 +169,11 @@ function openAccountNapCatSettings(account: AccountContext) {
   settingsOpen.value = false
   externalSettings.value = { title: `NapCat 设置 · ${account.label}`, src: '/webui' }
 }
-function openAccountGrowthSettings(account: AccountContext) {
+function openAccountOutreachSettings(account: AccountContext) {
   shell.selectAccount(account.id)
   closeAccountMenu()
   settingsOpen.value = false
-  growthSettings.value = { title: `全局设置 · ${account.label}` }
+  outreachSettings.value = { title: `全局设置 · ${account.label}` }
 }
 function closeMenus(event: MouseEvent) {
   if (suppressDocumentClose) return
@@ -187,8 +187,8 @@ function closeMenus(event: MouseEvent) {
   }
 }
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && growthSettings.value) {
-    growthSettings.value = null
+  if (event.key === 'Escape' && outreachSettings.value) {
+    outreachSettings.value = null
     return
   }
   if (event.key === 'Escape' && accountProfile.value) closeAccountProfile()
@@ -209,7 +209,7 @@ async function startSelectedClient() {
   if (!client?.enabled || shell.adding) return
   closeAddLauncher()
   void router.push('/im')
-  if (client.id === 'qq' && loginKind.value === 'douyin' && loginInProgress.value) await shell.cancelLogin()
+  if (client.id === 'qq' && loginKind.value !== 'qq' && loginInProgress.value) await shell.cancelLogin()
   await shell.addAccount(client.id)
 }
 function openAddLauncher() {
@@ -221,7 +221,9 @@ function openAddLauncher() {
 }
 function openAddLauncherEvent(event: Event) {
   const detail = (event as CustomEvent<{ client?: unknown }>).detail
-  const preferredClient = detail && (detail.client === 'qq' || detail.client === 'douyin') ? detail.client : null
+  const preferredClient = detail && ['qq', 'douyin', 'xiaohongshu', 'bilibili'].includes(String(detail.client))
+    ? String(detail.client)
+    : null
   if (preferredClient) selectedClientId.value = preferredClient
   suppressDocumentClose = true
   settingsOpen.value = false
@@ -347,9 +349,10 @@ onUnmounted(() => {
       </div>
       <RouterView v-else />
     </main>
-    <section v-if="showLoginPanel" class="login-panel" :class="{ 'login-panel-fill': loginKind === 'douyin' }" :aria-label="loginKind === 'douyin' ? '抖音登录' : 'QQ 登录'">
-      <GrowthLoginPanel
-        v-if="loginKind === 'douyin'"
+    <section v-if="showLoginPanel" class="login-panel" :class="{ 'login-panel-fill': loginKind !== 'qq' }" :aria-label="loginKind === 'xiaohongshu' ? '小红书登录' : loginKind === 'bilibili' ? '哔哩哔哩登录' : loginKind === 'douyin' ? '抖音登录' : 'QQ 登录'">
+      <OutreachLoginPanel
+        v-if="loginKind !== 'qq'"
+        :product="loginKind === 'xiaohongshu' ? '小红书自动评论' : loginKind === 'bilibili' ? '哔哩哔哩评论获客' : '抖音自动营销与引流工具'"
         :busy="shell.runtimePhase === 'logging_in'"
         :canceling="shell.cancelingLogin"
         :message="loginMessage"
@@ -374,7 +377,7 @@ onUnmounted(() => {
     </section>
     <div v-if="accountMenu" class="account-context-menu" :style="{ left: `${accountMenu.x}px`, top: `${accountMenu.y}px` }" @click.stop>
       <button v-if="canOpenNapCatSettings(accountMenu.account)" type="button" @click="openAccountNapCatSettings(accountMenu.account)"><SlidersHorizontal :size="16" />NapCat 设置</button>
-      <button v-if="canOpenGrowthSettings(accountMenu.account)" type="button" @click="openAccountGrowthSettings(accountMenu.account)"><Settings :size="16" />全局设置</button>
+      <button v-if="canOpenOutreachSettings(accountMenu.account)" type="button" @click="openAccountOutreachSettings(accountMenu.account)"><Settings :size="16" />全局设置</button>
       <button type="button" @click="relogin(accountMenu.account)">{{ accountMenu.account.status === 'online' ? '重新登录' : '登录账号' }}</button>
       <button type="button" class="danger" @click="askExit(accountMenu.account)">退出账号</button>
     </div>
@@ -397,12 +400,12 @@ onUnmounted(() => {
       :src="externalSettings?.src ?? ''"
       @close="externalSettings = null"
     />
-    <GrowthSettingsDialog
-      :open="growthSettings !== null"
-      :title="growthSettings?.title ?? ''"
-      @close="growthSettings = null"
+    <OutreachSettingsDialog
+      :open="outreachSettings !== null"
+      :title="outreachSettings?.title ?? ''"
+      @close="outreachSettings = null"
     />
-    <GrowthPip />
+    <OutreachPip />
     <p v-if="shell.error" class="shell-error" role="alert">{{ shell.error }} <button type="button" @click="shell.refreshAccounts">重试</button></p>
   </div>
 </template>

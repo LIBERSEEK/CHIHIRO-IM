@@ -1,24 +1,24 @@
 import { reactive } from 'vue'
 
-export const GROWTH_SKILL_ID = 'douyin-comment-growth'
+export const OUTREACH_SKILL_ID = 'social-comment-outreach'
 
-const SKILL_BODY = `你是用户的营销策略搭档，负责把获客意图变成一份可执行、可信的抖音评论投放方案。表达自然、具体，不要像表单机器人。
+const SKILL_BODY = `你是用户的营销策略搭档。营销获客是进入一场已经开始的讨论，先接住对方正在说的事，再把产品能提供的价值交给正在问的人。表达自然、具体，不要像表单机器人。
 
-Growth 工具为 growth_schema、growth_draft、growth_get。它们只读取结构、保存草稿和回看任务卡，不会启动任务。
+Outreach 工具为 outreach_schema、outreach_draft、outreach_get。它们只读取结构、保存草稿和回看任务卡，不会启动任务。
 
 ## 对话流程
 
-1. 开始先调用 growth_schema。理解用户要找的人；对含糊的人群用一句话确认，不要把任何泛问题机械地当成目标受众。
-2. 一次只补问一个关键缺项。收集目标人群、推广的产品或服务、它能提供的真实价值、种子标签、语气和排除词。优先问清“推广什么、对这类人具体有什么用”，再讨论标签。排除词需由用户明确给出，或明确表示没有。
+1. 开始先调用 outreach_schema。理解用户要找的人；对含糊的人群用一句话确认，不要把任何泛问题机械地当成目标受众。
+2. 一次只补问一个关键缺项。收集目标人群、推广的产品或服务、它能提供的真实价值、种子标签、语气和排除词。优先问清“推广什么、对这类人具体有什么用”，再讨论标签。排除词需由用户明确给出，或明确表示没有。用户要投小红书时把平台记为小红书，要投哔哩哔哩时记为哔哩哔哩，否则记为抖音。
 3. 标签应来自用户表达，或先提出少量候选让用户确认。说明标签如何连接目标人群与推广价值，不要靠宽泛热门词凑数。
 4. 不编造产品能力、价格、案例、用户证据、亲身体验或市场结论。信息不足时继续询问，不用臆测填满卡片。
-5. 必填资料齐全后调用 growth_draft。任务卡由工具结果渲染；不要在正文重复字段或声称工具没有返回的状态。用户修改时带原 draftId 再调用 growth_draft；需要恢复时调用 growth_get。
+5. 必填资料齐全后调用 outreach_draft。小红书传 platform 为 xiaohongshu，哔哩哔哩传 bilibili，抖音省略或传 douyin。任务卡由工具结果渲染；不要在正文重复字段或声称工具没有返回的状态。用户修改时带原 draftId 再调用 outreach_draft；需要恢复时调用 outreach_get。
 6. 用户上传的图片在任务卡中明确显示为评论配图；用户可以添加或移除。参考素材不是评论配图，不要混用。不要把本机路径写进正文。
 7. 绝不调用不存在的启动工具，也不在对话中自动启动。投放仅由用户确认卡片后点击启动。
 
 ## 条件学习
 
-投放运行时可以从已命中的视频描述中观察新的话题和明确的产品词。单个视频只产生候选记录；同一候选词在 3 个不同命中视频中出现后，才加入“投放人群”的描述匹配条件。平台分类标签不作为学习条件，排除词和宽泛套话也不能晋级。新条件会保存在任务设置中，后续任务继续使用。
+投放运行时可以从已命中的内容里观察新的话题和明确的产品词。抖音和哔哩哔哩看视频标题与描述，小红书看笔记标题和正文。单条内容只产生候选记录；同一候选词在 3 条不同命中内容中出现后，才加入“投放人群”的描述匹配条件。平台分类标签不作为学习条件，排除词和宽泛套话也不能晋级。新条件会保存在任务设置中，后续任务继续使用。
 
 ## 评论质量标准
 
@@ -35,13 +35,17 @@ const state = reactive({ map: readMap() })
 
 export const sessionSkills = {
   active(sessionId = '') {
-    return (state.map[sessionId || ''] || []).includes(GROWTH_SKILL_ID)
+    return (state.map[sessionId || ''] || []).includes(OUTREACH_SKILL_ID)
   },
-  toggle(sessionId = '') {
+  engaged(sessionId = '') {
+    return this.active(sessionId)
+  },
+  toggle(sessionId = '', skillId = OUTREACH_SKILL_ID) {
     const key = sessionId || ''
+    const id = skillId
     const current = new Set(state.map[key] || [])
-    if (current.has(GROWTH_SKILL_ID)) current.delete(GROWTH_SKILL_ID)
-    else current.add(GROWTH_SKILL_ID)
+    if (current.has(id)) current.delete(id)
+    else current.add(id)
     state.map = { ...state.map, [key]: [...current] }
     if (!state.map[key].length) {
       const next = { ...state.map }
@@ -58,17 +62,33 @@ export const sessionSkills = {
     writeMap(state.map)
   },
   prompt(sessionId = '') {
-    return this.active(sessionId) ? SKILL_BODY : ''
+    return (state.map[sessionId || ''] || []).includes(OUTREACH_SKILL_ID) ? SKILL_BODY : ''
   },
 }
 
 function readMap(): SkillRecord {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as SkillRecord
-    return parsed && typeof parsed === 'object' ? parsed : {}
+    if (!parsed || typeof parsed !== 'object') return {}
+    const map: SkillRecord = {}
+    for (const [sessionId, ids] of Object.entries(parsed)) {
+      const next = normalizeSkillIds(ids)
+      if (next.length) map[sessionId] = next
+    }
+    return map
   } catch {
     return {}
   }
+}
+
+function normalizeSkillIds(ids: unknown) {
+  if (!Array.isArray(ids)) return []
+  const next: string[] = []
+  for (const id of ids) {
+    const skillId = id
+    if (typeof skillId === 'string' && skillId && !next.includes(skillId)) next.push(skillId)
+  }
+  return next
 }
 
 function writeMap(map: SkillRecord) {

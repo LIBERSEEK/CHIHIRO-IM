@@ -469,7 +469,7 @@ import type {
 } from "@/modules/agent/native/src/composables/useMessages";
 import { useI18n, useModuleI18n } from "@/modules/agent/native/src/i18n/composables";
 import { copyToClipboard } from "@/modules/agent/native/src/utils/clipboard";
-import { isCampaignSteerText, visibleCampaignText } from "@/modules/growth/campaign-plan";
+import { isCampaignSteerText, visibleCampaignText } from "@/modules/outreach/domain/campaign-plan";
 import SchemaCard from "@/modules/agent/SchemaCard.vue";
 import { parseChihiroCard } from "@/modules/agent/schema-card";
 

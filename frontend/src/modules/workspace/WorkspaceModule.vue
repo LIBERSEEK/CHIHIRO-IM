@@ -30,7 +30,7 @@ import UserAddContactPan from '../im/native/src/components/user/UserAddContactPa
 import UserFileManager, { panelVisible } from '../im/native/src/components/user/UserFileManager.vue'
 import { setNativeViewerHost } from '../im/native/viewer'
 import AgentEntry from '../agent/AgentEntry.vue'
-import GrowthWorkbench from '../growth/GrowthWorkbench.vue'
+import OutreachWorkbench from '../outreach/components/OutreachWorkbench.vue'
 import { resolveWorkspaceChrome } from './shell-chrome'
 import { routeForImConversation, routeForWorkspaceList, useWorkspace, type ListTab, type WorkspaceRoute } from './workspace'
 import { queryText, syncWorkspaceFromRoute, workspaceRouteMatches } from './routeSync'
@@ -66,8 +66,8 @@ const chrome = computed(() => resolveWorkspaceChrome({
   platform: shell.activeAccount?.platform,
   listTab: workspace.listTab,
 }))
-const chromeLabel = computed(() => chrome.value.mode === 'douyin' ? '抖音' : chrome.value.mode === 'none' ? '工作台' : '消息与联系人')
-let growthChatDismissed = false
+const chromeLabel = computed(() => chrome.value.mode === 'xiaohongshu' ? '小红书' : chrome.value.mode === 'bilibili' ? '哔哩哔哩' : chrome.value.mode === 'douyin' ? '抖音' : chrome.value.mode === 'none' ? '工作台' : '消息与联系人')
+let outreachChatDismissed = false
 const showSettings = computed(() => route.query.settings === '1' && chrome.value.mode === 'qq')
 const connectingNativeAccountId = ref<string | null>(null)
 const readyNativeAccountId = ref<string | null>(null)
@@ -103,7 +103,7 @@ async function connect() {
   resetNativeAccountState()
   error.value = ''
   selectNativeAccountOptions(account?.id)
-  if (!account || account.status !== 'online' || account.platform === 'douyin') {
+  if (!account || account.status !== 'online' || account.platform !== 'qq') {
     connectingNativeAccountId.value = null
     return
   }
@@ -126,9 +126,9 @@ function replaceWorkspaceRoute(target: WorkspaceRoute) {
 }
 
 function syncChrome() {
-  if (workspace.growthChatRequest) {
-    growthChatDismissed = false
-    workspace.growthChatRequest = false
+  if (workspace.outreachChatRequest) {
+    outreachChatDismissed = false
+    workspace.outreachChatRequest = false
     workspace.mobilePane = 'chat'
   }
   const next = resolveWorkspaceChrome({
@@ -151,10 +151,10 @@ function syncChrome() {
       replaceWorkspaceRoute(routeForWorkspaceList(next.listTab))
     }
   }
-  if (next.showGrowth) {
-    if (!growthChatDismissed) workspace.mobilePane = 'chat'
+  if (next.showOutreach) {
+    if (!outreachChatDismissed) workspace.mobilePane = 'chat'
   } else {
-    growthChatDismissed = false
+    outreachChatDismissed = false
   }
 }
 
@@ -209,15 +209,15 @@ function selectList(tab: ListTab) {
   if (!chrome.value.showMessageTab && tab === 'messages') return
   workspace.selectList(tab)
   if (chrome.value.mode !== 'qq' && tab === 'workbench') workspace.openAgentPane()
-  if (chrome.value.mode === 'douyin' && tab === 'messages') {
-    growthChatDismissed = false
+  if ((chrome.value.mode === 'douyin' || chrome.value.mode === 'xiaohongshu' || chrome.value.mode === 'bilibili') && tab === 'messages') {
+    outreachChatDismissed = false
     workspace.mobilePane = 'chat'
   }
   replaceWorkspaceRoute(routeForWorkspaceList(tab))
 }
 
 function backToList() {
-  if (chrome.value.showGrowth) growthChatDismissed = true
+  if (chrome.value.showOutreach) outreachChatDismissed = true
   workspace.mobilePane = 'list'
 }
 
@@ -335,7 +335,7 @@ onBeforeUnmount(() => {
         </template>
       </UserOptions>
     </div>
-    <div v-show="!showSettings" id="base-app" :class="{ 'native-has-chat': workspace.mobilePane === 'chat', 'native-workbench-list': workspace.listTab === 'workbench' || chrome.showGrowth }">
+    <div v-show="!showSettings" id="base-app" :class="{ 'native-has-chat': workspace.mobilePane === 'chat', 'native-workbench-list': workspace.listTab === 'workbench' || chrome.showOutreach }">
       <aside class="native-list">
         <nav class="workspace-tabs chihiro-inbox-tabs" aria-label="列表工作区">
           <button v-if="chrome.showMessageTab" type="button" :class="{ 'is-on': workspace.listTab === 'messages' }" @click="selectList('messages')">
@@ -346,8 +346,8 @@ onBeforeUnmount(() => {
           <span class="chihiro-inbox-tabs-spacer" />
           <button type="button" :class="{ 'is-on': workspace.listTab === 'workbench' }" @click="selectList('workbench')">工作台</button>
         </nav>
-        <div v-show="workspace.listTab === 'workbench' || chrome.showGrowth" ref="agentSidebar" class="native-list-content" />
-        <div v-show="workspace.listTab !== 'workbench' && !chrome.showGrowth" class="native-list-content">
+        <div v-show="workspace.listTab === 'workbench' || chrome.showOutreach" ref="agentSidebar" class="native-list-content" />
+        <div v-show="workspace.listTab !== 'workbench' && !chrome.showOutreach" class="native-list-content">
         <div v-if="shell.activeAccount?.status !== 'online'" class="native-status">登录 QQ 后查看消息和联系人</div>
         <div v-else-if="nativeAccountConnecting" class="native-status native-loading" role="status"><span class="chihiro-spinner" aria-hidden="true" />正在连接账号…</div>
         <UserFriends v-else-if="imListTab === 'friends'" :key="shell.activeAccountId ?? 'none'" :list="contacts.userList" @user-click="openContactChat" @contact-info="inspectContact" @load-history="loadHistory" />
@@ -356,9 +356,9 @@ onBeforeUnmount(() => {
       </aside>
       <main class="native-chat">
         <button class="workspace-back" @click="backToList">返回列表</button>
-        <div v-if="workspace.activePane === 'empty' && !chrome.showGrowth" class="native-thread-content native-status">选择 对话/任务 开始</div>
-        <div ref="agentThread" v-show="workspace.activePane === 'agent' && !chrome.showGrowth" class="native-thread-content" />
-        <div v-show="workspace.activePane === 'im' && !chrome.showGrowth" class="native-thread-content">
+        <div v-if="workspace.activePane === 'empty' && !chrome.showOutreach" class="native-thread-content native-status">选择 对话/任务 开始</div>
+        <div ref="agentThread" v-show="workspace.activePane === 'agent' && !chrome.showOutreach" class="native-thread-content" />
+        <div v-show="workspace.activePane === 'im' && !chrome.showOutreach" class="native-thread-content">
         <div v-if="error" class="native-status" role="alert">{{ error }} <button type="button" @click="connect">重新连接</button></div>
         <div v-else-if="!shell.activeAccount || shell.activeAccount.status !== 'online'" class="native-status">账号未连接</div>
         <div v-else-if="nativeAccountConnecting" class="native-status native-loading" role="status"><span class="chihiro-spinner" aria-hidden="true" />正在连接账号…</div>
@@ -366,7 +366,7 @@ onBeforeUnmount(() => {
         <UserChat v-else-if="hasChat" :key="`${shell.activeAccountId}:${chat.chatInfo.show.type}:${chat.chatInfo.show.id}`" :chat="chat.chatInfo" :list="chat.messageList" :profile-only="profileOnly" @start-chat="sendToContact" @close-profile="closeContactProfile" />
         <div v-else class="native-status">选择 对话/任务 开始</div>
         </div>
-        <GrowthWorkbench v-if="chrome.showGrowth" class="growth-stage" />
+        <OutreachWorkbench v-if="chrome.showOutreach" class="outreach-stage" />
       </main>
       <Teleport to="body">
         <TransitionGroup class="app-msg chihiro-global-toast" name="appmsg" tag="div" aria-live="polite">
@@ -431,7 +431,7 @@ onBeforeUnmount(() => {
   cursor:not-allowed;
   opacity:.38;
 }
-.chihiro-native-im .native-chat > .growth-stage {
+.chihiro-native-im .native-chat > .outreach-stage {
   position:absolute;
   z-index:2;
   inset:0;
@@ -616,7 +616,7 @@ onBeforeUnmount(() => {
   .chihiro-native-im .native-chat { display:none; }
   .chihiro-native-im .workspace-back { display:block; position:absolute; top:0; left:0; height:32px; z-index:10; padding:4px 12px; color:var(--color-font); background:var(--color-bg); }
   .chihiro-native-im .native-thread-content,
-  .chihiro-native-im .native-chat > .growth-stage { top:32px; }
+  .chihiro-native-im .native-chat > .outreach-stage { top:32px; }
   .chihiro-native-im .native-has-chat .native-list { display:none; }
   .chihiro-native-im .native-has-chat .native-chat { display:block; }
 }

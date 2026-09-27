@@ -6,10 +6,10 @@
  * Claude Desktop / Codex extra:
  *   { "mcpServers": { "chihiro": { "command": "node", "args": ["/abs/path/backend/src/mcp/server.mjs"] } } }
  *
- * The workbench campaign agent uses growth-server.mjs so it does not receive QQ tools.
+ * The workbench campaign agent uses outreach-server.mjs so it does not receive QQ tools.
  * Both entries answer newline JSON-RPC and Content-Length.
  */
-import { callGrowthTool, growthToolDefinitions, growthToolName } from './growth-card.mjs'
+import { callOutreachTool, outreachToolDefinitions, outreachToolName } from './outreach-card.mjs'
 import { createMcpHandler, serveMcp } from './stdio.mjs'
 import { createWorkbenchApi } from './workbench-api.mjs'
 
@@ -88,7 +88,7 @@ const tools = [
       required: ['action']
     }
   },
-  ...growthToolDefinitions(),
+  ...outreachToolDefinitions(),
 ]
 
 async function callTool(name, args = {}) {
@@ -125,7 +125,7 @@ async function callTool(name, args = {}) {
       throw new Error('unknown_gate_action')
     }
     default:
-      if (growthToolName(name)) return callGrowthTool(name, args, api)
+      if (outreachToolName(name)) return callOutreachTool(name, args, api)
       throw new Error(`unknown tool ${name}`)
   }
 }
@@ -138,7 +138,7 @@ serveMcp(createMcpHandler({
     'Do not invent accountId/peerId/userId/groupId. contact may run without asking and may be repeated for multiple observed targets; the server spaces real submits by 6–10s per account. ' +
     'send follows Chihiro gate mode (ask/auto/always). Ask before gate.approve. ' +
     'Image generation is your job; send.image only delivers a file you already have. ' +
-    'Douyin comment campaigns use growth_schema, growth_draft and growth_get. Those tools never start a task.',
+    'Douyin comment campaigns use outreach_schema, outreach_draft and outreach_get. Those tools never start a task.',
   tools,
   callTool,
 }))

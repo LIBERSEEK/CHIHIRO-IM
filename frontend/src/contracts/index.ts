@@ -15,7 +15,7 @@ export interface ConversationKey {
   kind: ConversationKind
 }
 
-export type AccountPlatform = 'qq' | 'douyin'
+export type AccountPlatform = 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili'
 
 export interface AccountContext {
   id: AccountId
@@ -84,7 +84,17 @@ export function isDouyinAccountId(id: string): boolean {
   return /^douyin:[A-Za-z0-9._-]+$/.test(id)
 }
 
+export function isXiaohongshuAccountId(id: string): boolean {
+  return /^xiaohongshu:[A-Za-z0-9._-]+$/.test(id)
+}
+
+export function isBilibiliAccountId(id: string): boolean {
+  return /^bilibili:[A-Za-z0-9._-]+$/.test(id)
+}
+
 export function accountPlatformFromId(id: string): AccountPlatform | null {
+  if (isBilibiliAccountId(id)) return 'bilibili'
+  if (isXiaohongshuAccountId(id)) return 'xiaohongshu'
   if (isDouyinAccountId(id)) return 'douyin'
   if (isQqAccountId(id)) return 'qq'
   return null

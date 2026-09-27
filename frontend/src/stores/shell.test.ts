@@ -46,9 +46,9 @@ describe('runtime account shell', () => {
     expect(parsed.activeId).toBe(dy)
   })
 
-  it('keeps Douyin avatars served from the growth runtime', () => {
+  it('keeps Douyin avatars served from the outreach runtime', () => {
     const dy = accountId('douyin:abc_1')
-    const avatar = '/api/runtime/growth/accounts/douyin%3Aabc_1/avatar?v=9'
+    const avatar = '/api/runtime/outreach/accounts/douyin%3Aabc_1/avatar?v=9'
     const parsed = parseRuntimeAccounts({
       accounts: { activeId: dy, accounts: [
         { id: dy, nickname: '创作者', platform: 'douyin', online: true, avatar },
@@ -285,7 +285,7 @@ describe('runtime account shell', () => {
       ...state(null, []),
       phase: 'browser_setup',
       pendingAdd: true,
-      growth: {
+      outreach: {
         loginClient: 'douyin',
         pendingAdd: true,
         phase: 'browser_setup',
@@ -310,25 +310,25 @@ describe('runtime account shell', () => {
     expect(shell.browserDetected).toBe(true)
   })
 
-  it('opens growth PiP when a Douyin task starts and tracks preview mode', async () => {
+  it('opens outreach PiP when a Douyin task starts and tracks preview mode', async () => {
     const dy = accountId('douyin:abc_1')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
       accounts: { activeId: dy, accounts: [{ id: dy, nickname: '创作者', platform: 'douyin', online: true }] },
-      growth: {
+      outreach: {
         loginClient: 'douyin',
         task: { running: true, accountId: dy, status: 'running', logs: [], commented: 0, scanned: 0, id: 't1', startedAt: '2026-09-21T00:00:00.000Z' },
         preview: { mode: 'pip', available: true, muted: true },
       },
     })))
     const shell = useShellStore()
-    expect(shell.growthPipOpen).toBe(false)
+    expect(shell.outreachPipOpen).toBe(false)
     await shell.refreshAccounts()
-    expect(shell.growthTask.running).toBe(true)
-    expect(shell.growthPipOpen).toBe(true)
-    expect(shell.growthTask.previewMode).toBe('pip')
-    expect(shell.growthTask.previewAvailable).toBe(true)
-    expect(shell.growthTask.previewMuted).toBe(true)
-    expect(shell.growthTask.paused).toBe(false)
+    expect(shell.outreachTask.running).toBe(true)
+    expect(shell.outreachPipOpen).toBe(true)
+    expect(shell.outreachTask.previewMode).toBe('pip')
+    expect(shell.outreachTask.previewAvailable).toBe(true)
+    expect(shell.outreachTask.previewMuted).toBe(true)
+    expect(shell.outreachTask.paused).toBe(false)
   })
 
   it('enters a clean pending-new-account state before the start response returns', async () => {

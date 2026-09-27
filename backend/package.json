@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/gateway/server.mjs",
     "dev": "node --watch src/gateway/server.mjs",
-    "check": "node --check src/gateway/server.mjs && node --check src/runtime/index.mjs && node --check src/mcp/server.mjs && node --check src/mcp/growth-server.mjs && node --check src/mcp/stdio.mjs && node --check src/mcp/workbench-api.mjs",
+    "check": "node --check src/gateway/server.mjs && node --check src/runtime/index.mjs && node --check src/mcp/server.mjs && node --check src/mcp/outreach-server.mjs && node --check src/mcp/stdio.mjs && node --check src/mcp/workbench-api.mjs",
     "test": "node --test"
   },
   "engines": {

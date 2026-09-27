@@ -8,7 +8,7 @@ const card = {
   title: '任务卡',
   schema: { fields: [{ key: 'audience', label: '人群', type: 'text' }] },
   value: { audience: '使用 Codex 的人' },
-  actions: [{ id: 'start', label: '启动', method: 'POST', path: '/api/runtime/growth/brief/start' }],
+  actions: [{ id: 'start', label: '启动', method: 'POST', path: '/api/runtime/outreach/brief/start' }],
 }
 
 describe('parseChihiroCard', () => {
@@ -58,8 +58,8 @@ describe('parseChihiroCard', () => {
         {
           type: 'tool_call',
           tool_calls: [
-            { id: 'schema', name: 'growth_schema', result: JSON.stringify({ kind: 'chihiro.card', schema: card.schema }) },
-            { id: 'draft', name: 'growth_draft', result: JSON.stringify(card) },
+            { id: 'schema', name: 'outreach_schema', result: JSON.stringify({ kind: 'chihiro.card', schema: card.schema }) },
+            { id: 'draft', name: 'outreach_draft', result: JSON.stringify(card) },
           ],
         },
         { type: 'plain', text: '卡片已就绪' },
@@ -69,8 +69,8 @@ describe('parseChihiroCard', () => {
     const content = blocks.filter((block) => block.kind === 'content')
     const hiddenTools = thinking.flatMap((block) => block.parts.flatMap((part) => part.tool_calls || []))
     const shownTools = content.flatMap((block) => block.parts.flatMap((part) => part.tool_calls || []))
-    expect(hiddenTools.map((tool) => tool.name)).toEqual(['growth_schema'])
-    expect(shownTools.map((tool) => tool.name)).toEqual(['growth_draft'])
+    expect(hiddenTools.map((tool) => tool.name)).toEqual(['outreach_schema'])
+    expect(shownTools.map((tool) => tool.name)).toEqual(['outreach_draft'])
     expect(content.some((block) => block.parts.some((part) => part.type === 'plain'))).toBe(true)
   })
 })

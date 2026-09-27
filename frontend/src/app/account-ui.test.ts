@@ -13,7 +13,7 @@ import {
   splitDouyinIdentity,
   accountUnreadLabel,
   canCloseExitDialog,
-  canOpenGrowthSettings,
+  canOpenOutreachSettings,
   canOpenNapCatSettings,
   clampAccountMenuPosition,
   openExternalFrame,
@@ -84,10 +84,12 @@ describe('account rail UI contract', () => {
     expect(canOpenNapCatSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(false)
   })
 
-  it('keeps growth settings scoped to Douyin accounts', () => {
-    expect(canOpenGrowthSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(true)
-    expect(canOpenGrowthSettings(account({ platform: 'qq' }))).toBe(false)
-    expect(canOpenGrowthSettings(account({ platform: 'telegram' as never }))).toBe(false)
+  it('keeps outreach settings scoped to Douyin accounts', () => {
+    expect(canOpenOutreachSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(true)
+    expect(canOpenOutreachSettings(account({ id: accountId('bilibili:abc'), platform: 'bilibili' }))).toBe(true)
+    expect(canOpenOutreachSettings(account({ id: accountId('xiaohongshu:abc'), platform: 'xiaohongshu' }))).toBe(true)
+    expect(canOpenOutreachSettings(account({ platform: 'qq' }))).toBe(false)
+    expect(canOpenOutreachSettings(account({ platform: 'telegram' as never }))).toBe(false)
   })
 
   it('splits a Douyin profile line into the name and the Douyin id', () => {
@@ -137,8 +139,8 @@ describe('account rail UI contract', () => {
     expect(accountAvatarSrc(account({
       id: accountId('douyin:abc'),
       platform: 'douyin',
-      avatar: '/api/runtime/growth/accounts/douyin%3Aabc/avatar?v=1',
-    }))).toBe('/api/runtime/growth/accounts/douyin%3Aabc/avatar?v=1')
+      avatar: '/api/runtime/outreach/accounts/douyin%3Aabc/avatar?v=1',
+    }))).toBe('/api/runtime/outreach/accounts/douyin%3Aabc/avatar?v=1')
   })
 
   it('clamps context menu position inside the shell viewport', () => {

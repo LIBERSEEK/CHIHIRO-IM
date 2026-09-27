@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { AccountContext, AccountId, AccountPlatform } from '../contracts'
-import { accountId, accountPlatformFromId, isDouyinAccountId } from '../contracts'
+import { accountId, accountPlatformFromId, isBilibiliAccountId, isDouyinAccountId, isXiaohongshuAccountId } from '../contracts'
 import { splitDouyinIdentity } from '@/app/account-ui'
 import {
   filterUnreadPeers,
@@ -76,20 +76,26 @@ export function parseRuntimeAccounts(value: unknown): { accounts: RuntimeAccount
 
 function isAllowedAvatar(src: string): boolean {
   if (/^https?:\/\//.test(src)) return true
-  return src.startsWith('/api/runtime/growth/accounts/') && src.includes('/avatar')
+  return src.startsWith('/api/runtime/outreach/accounts/') && src.includes('/avatar')
 }
 
 function parseAccountPlatform(item: Record<string, unknown>): AccountPlatform | null {
+  if (item.platform === 'bilibili' || item.client === 'bilibili') return 'bilibili'
+  if (item.platform === 'xiaohongshu' || item.client === 'xiaohongshu') return 'xiaohongshu'
   if (item.platform === 'douyin' || item.client === 'douyin') return 'douyin'
   if (item.platform === 'qq' || item.client === 'qq') return 'qq'
   return typeof item.id === 'string' ? accountPlatformFromId(item.id) : null
+}
+
+function outreachClientName(client: string) {
+  return client === 'xiaohongshu' ? '小红书' : client === 'bilibili' ? '哔哩哔哩' : '抖音'
 }
 
 function messageFrom(value: unknown, fallback: string): string {
   return record(value) && typeof value.message === 'string' && value.message.trim() ? value.message : fallback
 }
 
-export interface GrowthTaskState {
+export interface OutreachTaskState {
   running: boolean
   accountId: string
   status: string
@@ -104,7 +110,7 @@ export interface GrowthTaskState {
   paused: boolean
 }
 
-export function parseGrowthTask(value: unknown): GrowthTaskState {
+export function parseOutreachTask(value: unknown): OutreachTaskState {
   if (!record(value)) {
     return { running: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '', previewMode: 'window', previewAvailable: false, previewMuted: true, paused: false }
   }
@@ -164,8 +170,8 @@ export const useShellStore = defineStore('shell', () => {
   const loginClient = ref('qq')
   const browserPath = ref('')
   const browserDetected = ref(false)
-  const growthTask = ref<GrowthTaskState>(parseGrowthTask(null))
-  const growthPipOpen = ref(false)
+  const outreachTask = ref<OutreachTaskState>(parseOutreachTask(null))
+  const outreachPipOpen = ref(false)
   const activeAccount = computed(() => accounts.value.find(account => account.id === activeAccountId.value) ?? null)
   let requestVersion = 0
   let selectionVersion = 0
@@ -237,22 +243,22 @@ export const useShellStore = defineStore('shell', () => {
     if (!unchanged) accounts.value = next
   }
 
-  function applyGrowthState(value: unknown) {
-    if (!record(value) || !record(value.growth)) return
-    const growth = value.growth
-    loginClient.value = growth.loginClient === 'douyin' ? 'douyin' : 'qq'
-    if (typeof growth.browserPath === 'string') browserPath.value = growth.browserPath
-    browserDetected.value = growth.browserDetected === true
-    const wasRunning = growthTask.value.running
-    const nextTask = parseGrowthTask(growth.task)
-    if (record(growth.preview)) {
-      nextTask.previewMode = growth.preview.mode === 'pip' ? 'pip' : 'window'
-      nextTask.previewAvailable = growth.preview.available === true
-      nextTask.previewMuted = growth.preview.muted !== false
+  function applyOutreachState(value: unknown) {
+    if (!record(value) || !record(value.outreach)) return
+    const outreach = value.outreach
+    loginClient.value = outreach.loginClient === 'xiaohongshu' || outreach.loginClient === 'bilibili' || outreach.loginClient === 'douyin' ? outreach.loginClient : 'qq'
+    if (typeof outreach.browserPath === 'string') browserPath.value = outreach.browserPath
+    browserDetected.value = outreach.browserDetected === true
+    const wasRunning = outreachTask.value.running
+    const nextTask = parseOutreachTask(outreach.task)
+    if (record(outreach.preview)) {
+      nextTask.previewMode = outreach.preview.mode === 'pip' ? 'pip' : 'window'
+      nextTask.previewAvailable = outreach.preview.available === true
+      nextTask.previewMuted = outreach.preview.muted !== false
     }
-    growthTask.value = nextTask
-    if (growthTask.value.running && !wasRunning) growthPipOpen.value = true
-    if (!growthTask.value.running && !growthTask.value.accountId) {
+    outreachTask.value = nextTask
+    if (outreachTask.value.running && !wasRunning) outreachPipOpen.value = true
+    if (!outreachTask.value.running && !outreachTask.value.accountId) {
       /* keep pip if the operator opened it by hand */
     }
   }
@@ -272,7 +278,7 @@ export const useShellStore = defineStore('shell', () => {
         qrVersion.value = 0
       }
     }
-    applyGrowthState(value)
+    applyOutreachState(value)
     mergeAccounts(state.accounts)
     const selectedStillExists = state.accounts.some(account => account.id === activeAccountId.value)
     const adoptNewLogin = pendingBefore && !pendingAdd.value && Boolean(state.activeId)
@@ -342,12 +348,12 @@ export const useShellStore = defineStore('shell', () => {
   async function addAccount(client = 'qq') {
     if (adding.value || accountAction.value) return
     const version = ++loginVersion
-    const douyin = client === 'douyin'
+    const browserOutreach = client === 'douyin' || client === 'xiaohongshu' || client === 'bilibili'
     adding.value = true
     pendingAdd.value = true
-    loginClient.value = douyin ? 'douyin' : 'qq'
-    runtimePhase.value = douyin ? 'browser_setup' : 'starting'
-    runtimeMessage.value = douyin ? '选择本机 Chrome，然后登录抖音账号' : '正在启动 QQ 登录'
+    loginClient.value = browserOutreach ? client : 'qq'
+    runtimePhase.value = browserOutreach ? 'browser_setup' : 'starting'
+    runtimeMessage.value = browserOutreach ? `选择本机 Chrome，然后登录${outreachClientName(client)}账号` : '正在启动 QQ 登录'
     qrReady.value = false
     qrVersion.value = 0
     error.value = ''
@@ -359,8 +365,8 @@ export const useShellStore = defineStore('shell', () => {
       const body: unknown = await response.json().catch(() => ({}))
       if (version !== loginVersion) return
       if (!response.ok) throw new Error(record(body) && typeof body.message === 'string' ? body.message : `无法添加账号（HTTP ${response.status}）`)
-      const state = applyRuntimeState(body, !douyin)
-      if (!douyin) activeAccountId.value = state.activeId ?? state.accounts.at(-1)?.id ?? null
+      const state = applyRuntimeState(body, !browserOutreach)
+      if (!browserOutreach) activeAccountId.value = state.activeId ?? state.accounts.at(-1)?.id ?? null
     } catch (cause) {
       if (version === loginVersion) {
         error.value = cause instanceof Error ? cause.message : '无法添加账号'
@@ -380,17 +386,17 @@ export const useShellStore = defineStore('shell', () => {
     accountAction.value = true
     error.value = ''
     selectAccount(id)
-    const douyin = isDouyinAccountId(id)
-    if (douyin) {
-      loginClient.value = 'douyin'
+    const outreachClient = isBilibiliAccountId(id) ? 'bilibili' : isXiaohongshuAccountId(id) ? 'xiaohongshu' : (isDouyinAccountId(id) ? 'douyin' : '')
+    if (outreachClient) {
+      loginClient.value = outreachClient
       runtimePhase.value = 'browser_setup'
-      runtimeMessage.value = '选择本机 Chrome，然后登录抖音账号'
+      runtimeMessage.value = `选择本机 Chrome，然后登录${outreachClientName(outreachClient)}账号`
     }
     try {
       const response = await fetch('/api/runtime/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(douyin
-          ? { client: 'douyin', id }
+        body: JSON.stringify(outreachClient
+          ? { client: outreachClient, id }
           : { client: 'qq', uin: String(id).replace(/^qq:/, ''), ...(refreshQr ? { refreshQr: true } : {}) }),
       })
       const body: unknown = await response.json().catch(() => ({}))
@@ -405,7 +411,7 @@ export const useShellStore = defineStore('shell', () => {
   }
 
   async function saveBrowserPath(nextPath: string) {
-    const response = await fetch('/api/runtime/growth/browser', {
+    const response = await fetch('/api/runtime/outreach/browser', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: nextPath }),
@@ -416,30 +422,36 @@ export const useShellStore = defineStore('shell', () => {
     return body
   }
 
-  async function loginGrowthAccount(nextPath = browserPath.value, id: AccountId | '' = '') {
+  async function loginOutreachAccount(nextPath = browserPath.value, id: AccountId | '' = '') {
     if (accountAction.value || runtimePhase.value === 'logging_in') return
     const version = ++loginVersion
+    const target = id || (pendingAdd.value ? '' : activeAccountId.value || '')
+    const client = isBilibiliAccountId(target) || loginClient.value === 'bilibili'
+      ? 'bilibili'
+      : isXiaohongshuAccountId(target) || loginClient.value === 'xiaohongshu' ? 'xiaohongshu' : 'douyin'
+    const name = outreachClientName(client)
     accountAction.value = true
-    loginClient.value = 'douyin'
+    loginClient.value = client
     runtimePhase.value = 'logging_in'
-    runtimeMessage.value = '请在弹出的 Chrome 中登录抖音'
+    runtimeMessage.value = `请在弹出的 Chrome 中登录${name}`
     error.value = ''
     try {
-      const response = await fetch('/api/runtime/growth/login', {
+      const response = await fetch('/api/runtime/outreach/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: id || (pendingAdd.value ? '' : activeAccountId.value || ''),
+          id: target,
+          client,
           browserPath: nextPath || browserPath.value,
         }),
       })
       const body: unknown = await response.json().catch(() => ({}))
       if (version !== loginVersion) return
-      if (!response.ok) throw new Error(messageFrom(body, `无法登录抖音（HTTP ${response.status}）`))
+      if (!response.ok) throw new Error(messageFrom(body, `无法登录${name}（HTTP ${response.status}）`))
       applyRuntimeState(body)
     } catch (cause) {
       if (version === loginVersion) {
-        error.value = cause instanceof Error ? cause.message : '无法登录抖音'
+        error.value = cause instanceof Error ? cause.message : `无法登录${name}`
         if (runtimePhase.value === 'logging_in') {
           runtimePhase.value = 'browser_setup'
           runtimeMessage.value = error.value
@@ -450,8 +462,8 @@ export const useShellStore = defineStore('shell', () => {
     }
   }
 
-  function setGrowthPipOpen(open: boolean) {
-    growthPipOpen.value = open
+  function setOutreachPipOpen(open: boolean) {
+    outreachPipOpen.value = open
   }
 
   async function refreshLoginQr() {
@@ -530,8 +542,8 @@ export const useShellStore = defineStore('shell', () => {
   return {
     activeAccountId, activeAccount, accounts, loading, adding, accountAction, cancelingLogin, removingAccountId, error,
     runtimePhase, runtimeMessage, pendingAdd, qrReady, qrVersion, clients,
-    loginClient, browserPath, browserDetected, growthTask, growthPipOpen,
+    loginClient, browserPath, browserDetected, outreachTask, outreachPipOpen,
     selectAccount, setAccountUnread, applyRuntimeState, refreshAccounts, refreshClients, addAccount, reloginAccount, refreshLoginQr, removeAccount, cancelLogin, cancelRefresh,
-    saveBrowserPath, loginGrowthAccount, setGrowthPipOpen,
+    saveBrowserPath, loginOutreachAccount, setOutreachPipOpen,
   }
 })
