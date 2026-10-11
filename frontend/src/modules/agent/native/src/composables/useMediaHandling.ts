@@ -9,7 +9,6 @@ export interface StagedFileInfo {
     type: string;  // image, record, file, video
     signature?: string;
     sourceFile?: File;
-    libraryId?: string;
 }
 
 export function useMediaHandling() {
@@ -85,24 +84,6 @@ export function useMediaHandling() {
         } finally {
             pendingFileSignatures.delete(signature);
         }
-    }
-
-    function stageExternal(info: { url: string; name: string; type: string; libraryId?: string }) {
-        if (info.libraryId && stagedFiles.value.some(file => file.libraryId === info.libraryId)) return;
-        stagedFiles.value.push({
-            attachment_id: info.libraryId ? `library:${info.libraryId}` : '',
-            filename: info.name,
-            original_name: info.name,
-            url: info.url,
-            type: info.type,
-            libraryId: info.libraryId,
-        });
-    }
-
-    function unstageLibrary(id: string) {
-        const index = stagedFiles.value.findIndex(file => file.libraryId === id);
-        if (index < 0) return;
-        stagedFiles.value.splice(index, 1);
     }
 
     async function processAndUploadImage(file: File) {
@@ -231,8 +212,6 @@ export function useMediaHandling() {
         getMediaFile,
         processAndUploadImage,
         processAndUploadFile,
-        stageExternal,
-        unstageLibrary,
         handlePaste,
         removeImage,
         removeAudio,

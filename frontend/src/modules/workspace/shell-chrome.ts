@@ -1,6 +1,6 @@
 import type { ListTab } from './workspace'
 
-export type WorkspaceClientMode = 'none' | 'qq' | 'douyin' | 'xiaohongshu' | 'bilibili'
+export type WorkspaceClientMode = 'none' | 'qq'
 
 export interface WorkspaceChromeInput {
   hasAccount: boolean
@@ -13,7 +13,6 @@ export interface WorkspaceChrome {
   showMessageTab: boolean
   showContactsTab: boolean
   contactsEnabled: boolean
-  showOutreach: boolean
   expandWorkbench: boolean
   listTab: ListTab
 }
@@ -26,21 +25,8 @@ export function resolveWorkspaceChrome(input: WorkspaceChromeInput): WorkspaceCh
       showMessageTab: false,
       showContactsTab: false,
       contactsEnabled: false,
-      showOutreach: false,
       expandWorkbench: true,
       listTab: 'workbench',
-    }
-  }
-  if (input.platform === 'douyin' || input.platform === 'xiaohongshu' || input.platform === 'bilibili') {
-    const listTab = input.listTab === 'friends' ? 'messages' : input.listTab
-    return {
-      mode: input.platform,
-      showMessageTab: true,
-      showContactsTab: true,
-      contactsEnabled: false,
-      showOutreach: listTab === 'messages',
-      expandWorkbench: false,
-      listTab,
     }
   }
   return {
@@ -48,7 +34,6 @@ export function resolveWorkspaceChrome(input: WorkspaceChromeInput): WorkspaceCh
     showMessageTab: true,
     showContactsTab: true,
     contactsEnabled: true,
-    showOutreach: false,
     expandWorkbench: false,
     listTab: input.listTab,
   }

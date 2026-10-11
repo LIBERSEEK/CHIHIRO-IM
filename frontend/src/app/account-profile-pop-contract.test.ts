@@ -23,8 +23,6 @@ describe('account rail profile pop', () => {
     expect(pop).toContain('account-profile-copy')
     expect(pop).toContain('复制 QQ 号')
     expect(pop).toContain('navigator.clipboard.writeText(copyValue.value)')
-    expect(pop).toContain('抖音号 {{ douyinId || \'—\' }}')
-    expect(pop).toContain('复制${copyLabel}')
     expect(pop).toContain("from '@lucide/vue'")
     expect(imPop).toContain('chihiro-profile-copy')
     expect(imPop).toContain('复制 QQ 号')
@@ -36,7 +34,6 @@ describe('account rail profile pop', () => {
 
   it('draws avatar platform badges from simple-icons library files', () => {
     expect(accountUi).toContain("from 'simple-icons/icons/qq.svg?raw'")
-    expect(accountUi).toContain("from 'simple-icons/icons/tiktok.svg?raw'")
     expect(accountUi).not.toContain('@/assets/brands/')
     expect(badge).toContain('accountPlatformBrand')
     expect(badge).toContain('<path :d="brand.path" fill="currentColor" />')

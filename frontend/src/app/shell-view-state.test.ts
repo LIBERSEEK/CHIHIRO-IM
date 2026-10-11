@@ -77,32 +77,17 @@ describe('shell view state', () => {
     expect(resolveShellViewState({ ...base, routeSettings: '1' }).showLoginPanel).toBe(false)
   })
 
-  it('shows a QQ login card while a Douyin account stays selected', () => {
+  it('shows the QQ login card while an account stays selected', () => {
     const state = resolveShellViewState({
       ...base,
       pendingAdd: true,
-      loginClient: 'qq',
       runtimePhase: 'qr',
       qrReady: true,
-      activeAccount: { ...onlineAccount, id: accountId('douyin:preview'), platform: 'douyin', label: '抖音' },
+      activeAccount: onlineAccount,
     })
     expect(state.loginKind).toBe('qq')
     expect(state.showLoginPanel).toBe(true)
     expect(state.loginMessage).toBe('请使用 QQ 扫描二维码。约两分钟有效。')
   })
 
-  it('shows the Douyin browser-setup panel instead of a QQ QR card', () => {
-    const state = resolveShellViewState({
-      ...base,
-      adding: true,
-      pendingAdd: true,
-      loginClient: 'douyin',
-      runtimePhase: 'browser_setup',
-      runtimeMessage: '选择本机 Chrome，然后登录抖音账号',
-    })
-    expect(state.loginInProgress).toBe(true)
-    expect(state.showLoginPanel).toBe(true)
-    expect(state.showEmptyLauncher).toBe(false)
-    expect(state.loginMessage).toBe('选择本机 Chrome，然后登录抖音账号')
-  })
 })

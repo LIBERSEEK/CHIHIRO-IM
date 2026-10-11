@@ -1,7 +1,6 @@
 import { computed, onBeforeUnmount, reactive, ref, type Ref } from "vue";
 import { chatApi, fileApi } from "@/modules/agent/native/src/api/v1";
 import { fetchWithAuth } from "@/modules/agent/native/src/api/http";
-import { parseChihiroCard } from "@/modules/agent/schema-card";
 
 export type TransportMode = "sse" | "websocket";
 
@@ -1369,24 +1368,22 @@ export function messageBlocks(content: ChatContent): MessageDisplayBlock[] {
   let currentParts: MessagePart[] = [];
 
   for (const part of parts) {
-    for (const piece of splitCardToolPart(part)) {
-      if (isEmptyPlainPart(piece)) continue;
+    if (isEmptyPlainPart(part)) continue;
 
-      const nextKind: MessageDisplayBlock["kind"] = isThinkingPart(piece)
-        ? "thinking"
-        : "content";
+    const nextKind: MessageDisplayBlock["kind"] = isThinkingPart(part)
+      ? "thinking"
+      : "content";
 
-      if (currentKind !== nextKind) {
-        if (currentKind && currentParts.length) {
-          blocks.push({ kind: currentKind, parts: currentParts });
-        }
-        currentKind = nextKind;
-        currentParts = [{ ...piece }];
-        continue;
+    if (currentKind !== nextKind) {
+      if (currentKind && currentParts.length) {
+        blocks.push({ kind: currentKind, parts: currentParts });
       }
-
-      currentParts.push({ ...piece });
+      currentKind = nextKind;
+      currentParts = [{ ...part }];
+      continue;
     }
+
+    currentParts.push({ ...part });
   }
 
   if (currentKind && currentParts.length) {
@@ -1483,21 +1480,7 @@ function isEmptyPlainPart(part: MessagePart) {
 }
 
 function isThinkingPart(part: MessagePart) {
-  if (part.type === "think") return true;
-  if (part.type !== "tool_call" || !Array.isArray(part.tool_calls)) return false;
-  const tools = part.tool_calls;
-  return !tools.length || tools.some((tool) => !parseChihiroCard(tool.result));
-}
-
-function splitCardToolPart(part: MessagePart): MessagePart[] {
-  if (part.type !== "tool_call" || !Array.isArray(part.tool_calls)) return [part];
-  const cards = part.tool_calls.filter((tool) => parseChihiroCard(tool.result));
-  const rest = part.tool_calls.filter((tool) => !parseChihiroCard(tool.result));
-  if (!cards.length || !rest.length) return [part];
-  return [
-    { ...part, tool_calls: rest },
-    { ...part, tool_calls: cards },
-  ];
+  return part.type === "think" || part.type === "tool_call";
 }
 
 function firstNonEmptyPartIndex(parts: MessagePart[]) {

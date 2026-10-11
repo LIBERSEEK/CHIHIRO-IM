@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { siQq, siTiktok } from 'simple-icons'
+import { siQq } from 'simple-icons'
 import { accountId, type AccountContext } from '@/contracts'
 import {
   accountAvatarClickAction,
@@ -7,13 +7,10 @@ import {
   accountPlatformBadge,
   accountPlatformBrand,
   accountQzoneUrl,
-  accountDouyinId,
   accountTitle,
   accountUin,
-  splitDouyinIdentity,
   accountUnreadLabel,
   canCloseExitDialog,
-  canOpenOutreachSettings,
   canOpenNapCatSettings,
   clampAccountMenuPosition,
   openExternalFrame,
@@ -81,67 +78,11 @@ describe('account rail UI contract', () => {
     expect(canOpenNapCatSettings(account({ platform: 'qq' }))).toBe(true)
     expect(canOpenNapCatSettings(account({ platform: 'telegram' as never }))).toBe(false)
     expect(canOpenNapCatSettings(account({ platform: 'wechat' as never }))).toBe(false)
-    expect(canOpenNapCatSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(false)
+    expect(canOpenNapCatSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' as never }))).toBe(false)
   })
 
-  it('keeps outreach settings scoped to Douyin accounts', () => {
-    expect(canOpenOutreachSettings(account({ id: accountId('douyin:abc'), platform: 'douyin' }))).toBe(true)
-    expect(canOpenOutreachSettings(account({ id: accountId('bilibili:abc'), platform: 'bilibili' }))).toBe(true)
-    expect(canOpenOutreachSettings(account({ id: accountId('xiaohongshu:abc'), platform: 'xiaohongshu' }))).toBe(true)
-    expect(canOpenOutreachSettings(account({ platform: 'qq' }))).toBe(false)
-    expect(canOpenOutreachSettings(account({ platform: 'telegram' as never }))).toBe(false)
-  })
 
-  it('splits a Douyin profile line into the name and the Douyin id', () => {
-    expect(splitDouyinIdentity('自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095')).toEqual({
-      name: '自由探索LIBERSEEK',
-      douyinId: '959855095',
-    })
-    expect(splitDouyinIdentity('创作者 关注 1.2万 粉丝 3 获赞 10 抖音号: liber.seek')).toEqual({
-      name: '创作者',
-      douyinId: 'liber.seek',
-    })
-    expect(splitDouyinIdentity('创作者')).toEqual({ name: '创作者', douyinId: '' })
-    const value = account({
-      id: accountId('douyin:abc'),
-      label: '自由探索LIBERSEEK',
-      platform: 'douyin',
-      douyinId: '959855095',
-    })
-    expect(accountDouyinId(value)).toBe('959855095')
-    expect(accountDouyinId(account())).toBe('')
-  })
 
-  it('labels Douyin accounts without QQ number, Qzone or Bot badge', () => {
-    const value = account({ id: accountId('douyin:abc'), label: '创作者', platform: 'douyin', botEnabled: true, unread: 3 })
-    expect(accountTitle(value)).toBe('创作者 · 抖音 · 在线 · 右键管理')
-    expect(accountUin(value)).toBe('')
-    expect(accountQzoneUrl(value)).toBe('')
-    expect(accountAvatarSrc(value)).toBe('')
-    expect(shouldShowBotBadge(value)).toBe(false)
-    expect(accountPlatformBadge(value.platform)).toBe('douyin')
-    expect(accountPlatformBadge('qq')).toBe('qq')
-    expect(accountPlatformBrand('qq')).toEqual({
-      platform: 'qq',
-      slug: siQq.slug,
-      title: siQq.title,
-      hex: siQq.hex,
-      path: siQq.path,
-    })
-    expect(accountPlatformBrand('douyin')).toEqual({
-      platform: 'douyin',
-      slug: siTiktok.slug,
-      title: '抖音',
-      hex: siTiktok.hex,
-      path: siTiktok.path,
-    })
-    expect(accountPlatformBrand('telegram' as never)).toBeNull()
-    expect(accountAvatarSrc(account({
-      id: accountId('douyin:abc'),
-      platform: 'douyin',
-      avatar: '/api/runtime/outreach/accounts/douyin%3Aabc/avatar?v=1',
-    }))).toBe('/api/runtime/outreach/accounts/douyin%3Aabc/avatar?v=1')
-  })
 
   it('clamps context menu position inside the shell viewport', () => {
     expect(clampAccountMenuPosition(900, 700, { width: 1000, height: 760 })).toEqual({ x: 804, y: 644 })
@@ -183,4 +124,9 @@ describe('account rail UI contract', () => {
     expect(shouldCloseImSettingsForKey('Escape', 'im', undefined)).toBe(false)
     expect(shouldCloseImSettingsForKey('Escape', 'agent', '1')).toBe(false)
   })
+})
+
+it('uses the QQ platform badge', () => {
+  expect(accountPlatformBadge('qq')).toBe('qq')
+  expect(accountPlatformBrand('qq')?.path).toBe(siQq.path)
 })

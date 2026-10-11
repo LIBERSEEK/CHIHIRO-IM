@@ -1,8 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { AccountContext, AccountId, AccountPlatform } from '../contracts'
-import { accountId, accountPlatformFromId, isBilibiliAccountId, isDouyinAccountId, isXiaohongshuAccountId } from '../contracts'
-import { splitDouyinIdentity } from '@/app/account-ui'
+import { accountId, accountPlatformFromId } from '../contracts'
 import {
   filterUnreadPeers,
   readAccountSessionNotice,
@@ -53,13 +52,9 @@ export function parseRuntimeAccounts(value: unknown): { accounts: RuntimeAccount
     const unread = typeof item.unread === 'number' && Number.isFinite(item.unread) ? Math.max(0, Math.floor(item.unread)) : undefined
     const unreadPeers = platform === 'qq' ? parseUnreadPeers(item.unreadPeers) : undefined
     const rawLabel = [item.label, item.nickname, item.id].find((label): label is string => typeof label === 'string' && Boolean(label.trim()))!
-    const identity = platform === 'douyin' ? splitDouyinIdentity(rawLabel) : null
-    const explicitDouyinId = typeof item.douyinId === 'string' ? item.douyinId.trim() : ''
-    const douyinId = identity ? (explicitDouyinId || identity.douyinId) : ''
     return {
       id: accountId(item.id),
-      label: identity ? (identity.name || '抖音账号') : rawLabel,
-      ...(douyinId ? { douyinId } : {}),
+      label: rawLabel,
       ...(avatar ? { avatar } : {}),
       ...(instanceId && platform === 'qq' ? { instanceId } : {}),
       platform,
@@ -76,58 +71,15 @@ export function parseRuntimeAccounts(value: unknown): { accounts: RuntimeAccount
 
 function isAllowedAvatar(src: string): boolean {
   if (/^https?:\/\//.test(src)) return true
-  return src.startsWith('/api/runtime/outreach/accounts/') && src.includes('/avatar')
+  return false
 }
 
 function parseAccountPlatform(item: Record<string, unknown>): AccountPlatform | null {
-  if (item.platform === 'bilibili' || item.client === 'bilibili') return 'bilibili'
-  if (item.platform === 'xiaohongshu' || item.client === 'xiaohongshu') return 'xiaohongshu'
-  if (item.platform === 'douyin' || item.client === 'douyin') return 'douyin'
-  if (item.platform === 'qq' || item.client === 'qq') return 'qq'
   return typeof item.id === 'string' ? accountPlatformFromId(item.id) : null
-}
-
-function outreachClientName(client: string) {
-  return client === 'xiaohongshu' ? '小红书' : client === 'bilibili' ? '哔哩哔哩' : '抖音'
 }
 
 function messageFrom(value: unknown, fallback: string): string {
   return record(value) && typeof value.message === 'string' && value.message.trim() ? value.message : fallback
-}
-
-export interface OutreachTaskState {
-  running: boolean
-  accountId: string
-  status: string
-  logs: Array<{ level?: string; text?: string; at?: string }>
-  commented: number
-  scanned: number
-  id: string
-  startedAt: string
-  previewMode: 'pip' | 'window'
-  previewAvailable: boolean
-  previewMuted: boolean
-  paused: boolean
-}
-
-export function parseOutreachTask(value: unknown): OutreachTaskState {
-  if (!record(value)) {
-    return { running: false, accountId: '', status: 'idle', logs: [], commented: 0, scanned: 0, id: '', startedAt: '', previewMode: 'window', previewAvailable: false, previewMuted: true, paused: false }
-  }
-  return {
-    running: value.running === true,
-    accountId: typeof value.accountId === 'string' ? value.accountId : '',
-    status: typeof value.status === 'string' && value.status ? value.status : 'idle',
-    logs: Array.isArray(value.logs) ? value.logs.filter(record) : [],
-    commented: Math.max(0, Math.floor(Number(value.commented) || 0)),
-    scanned: Math.max(0, Math.floor(Number(value.scanned) || 0)),
-    id: typeof value.id === 'string' ? value.id : '',
-    startedAt: typeof value.startedAt === 'string' ? value.startedAt : '',
-    previewMode: value.previewMode === 'pip' ? 'pip' : 'window',
-    previewAvailable: value.previewAvailable === true,
-    previewMuted: value.previewMuted !== false,
-    paused: value.paused === true || value.status === 'paused',
-  }
 }
 
 export interface RuntimeClient {
@@ -142,6 +94,7 @@ export function parseRuntimeClients(value: unknown): RuntimeClient[] {
   if (!record(value) || !Array.isArray(value.clients)) throw new Error('客户端列表响应格式无效')
   return value.clients.flatMap((item): RuntimeClient[] => {
     if (!record(item) || typeof item.id !== 'string' || typeof item.name !== 'string') return []
+    if (item.enabled === true && item.id !== 'qq') return []
     return [{
       id: item.id,
       name: item.name,
@@ -167,11 +120,6 @@ export const useShellStore = defineStore('shell', () => {
   const qrReady = ref(false)
   const qrVersion = ref(0)
   const clients = ref<RuntimeClient[]>([{ id: 'qq', name: 'QQ', badge: 'QQ', enabled: true }])
-  const loginClient = ref('qq')
-  const browserPath = ref('')
-  const browserDetected = ref(false)
-  const outreachTask = ref<OutreachTaskState>(parseOutreachTask(null))
-  const outreachPipOpen = ref(false)
   const activeAccount = computed(() => accounts.value.find(account => account.id === activeAccountId.value) ?? null)
   let requestVersion = 0
   let selectionVersion = 0
@@ -202,7 +150,6 @@ export const useShellStore = defineStore('shell', () => {
       status: account.status,
       ...(account.avatar ? { avatar: account.avatar } : {}),
       ...(account.instanceId ? { instanceId: account.instanceId } : {}),
-      ...(account.douyinId ? { douyinId: account.douyinId } : {}),
       ...(account.botEnabled ? { botEnabled: true } : {}),
       ...(account.botWired ? { botWired: true } : {}),
       ...(unread ? { unread } : {}),
@@ -216,7 +163,6 @@ export const useShellStore = defineStore('shell', () => {
       a.avatar === b.avatar &&
       a.instanceId === b.instanceId &&
       a.platform === b.platform &&
-      a.douyinId === b.douyinId &&
       a.status === b.status &&
       a.botEnabled === b.botEnabled &&
       a.botWired === b.botWired &&
@@ -243,26 +189,6 @@ export const useShellStore = defineStore('shell', () => {
     if (!unchanged) accounts.value = next
   }
 
-  function applyOutreachState(value: unknown) {
-    if (!record(value) || !record(value.outreach)) return
-    const outreach = value.outreach
-    loginClient.value = outreach.loginClient === 'xiaohongshu' || outreach.loginClient === 'bilibili' || outreach.loginClient === 'douyin' ? outreach.loginClient : 'qq'
-    if (typeof outreach.browserPath === 'string') browserPath.value = outreach.browserPath
-    browserDetected.value = outreach.browserDetected === true
-    const wasRunning = outreachTask.value.running
-    const nextTask = parseOutreachTask(outreach.task)
-    if (record(outreach.preview)) {
-      nextTask.previewMode = outreach.preview.mode === 'pip' ? 'pip' : 'window'
-      nextTask.previewAvailable = outreach.preview.available === true
-      nextTask.previewMuted = outreach.preview.muted !== false
-    }
-    outreachTask.value = nextTask
-    if (outreachTask.value.running && !wasRunning) outreachPipOpen.value = true
-    if (!outreachTask.value.running && !outreachTask.value.accountId) {
-      /* keep pip if the operator opened it by hand */
-    }
-  }
-
   function applyRuntimeState(value: unknown, preserveSelection = true, options: { preserveLoginState?: boolean } = {}) {
     const state = parseRuntimeAccounts(value)
     const pendingBefore = pendingAdd.value
@@ -278,7 +204,6 @@ export const useShellStore = defineStore('shell', () => {
         qrVersion.value = 0
       }
     }
-    applyOutreachState(value)
     mergeAccounts(state.accounts)
     const selectedStillExists = state.accounts.some(account => account.id === activeAccountId.value)
     const adoptNewLogin = pendingBefore && !pendingAdd.value && Boolean(state.activeId)
@@ -347,13 +272,12 @@ export const useShellStore = defineStore('shell', () => {
 
   async function addAccount(client = 'qq') {
     if (adding.value || accountAction.value) return
+    if (client !== 'qq') { error.value = '暂不支持该客户端'; return }
     const version = ++loginVersion
-    const browserOutreach = client === 'douyin' || client === 'xiaohongshu' || client === 'bilibili'
     adding.value = true
     pendingAdd.value = true
-    loginClient.value = browserOutreach ? client : 'qq'
-    runtimePhase.value = browserOutreach ? 'browser_setup' : 'starting'
-    runtimeMessage.value = browserOutreach ? `选择本机 Chrome，然后登录${outreachClientName(client)}账号` : '正在启动 QQ 登录'
+    runtimePhase.value = 'starting'
+    runtimeMessage.value = '正在启动 QQ 登录'
     qrReady.value = false
     qrVersion.value = 0
     error.value = ''
@@ -365,15 +289,14 @@ export const useShellStore = defineStore('shell', () => {
       const body: unknown = await response.json().catch(() => ({}))
       if (version !== loginVersion) return
       if (!response.ok) throw new Error(record(body) && typeof body.message === 'string' ? body.message : `无法添加账号（HTTP ${response.status}）`)
-      const state = applyRuntimeState(body, !browserOutreach)
-      if (!browserOutreach) activeAccountId.value = state.activeId ?? state.accounts.at(-1)?.id ?? null
+      const state = applyRuntimeState(body)
+      activeAccountId.value = state.activeId ?? state.accounts.at(-1)?.id ?? null
     } catch (cause) {
       if (version === loginVersion) {
         error.value = cause instanceof Error ? cause.message : '无法添加账号'
         pendingAdd.value = false
         runtimePhase.value = 'idle'
         runtimeMessage.value = ''
-        loginClient.value = 'qq'
       }
     } finally {
       if (version === loginVersion) adding.value = false
@@ -386,18 +309,10 @@ export const useShellStore = defineStore('shell', () => {
     accountAction.value = true
     error.value = ''
     selectAccount(id)
-    const outreachClient = isBilibiliAccountId(id) ? 'bilibili' : isXiaohongshuAccountId(id) ? 'xiaohongshu' : (isDouyinAccountId(id) ? 'douyin' : '')
-    if (outreachClient) {
-      loginClient.value = outreachClient
-      runtimePhase.value = 'browser_setup'
-      runtimeMessage.value = `选择本机 Chrome，然后登录${outreachClientName(outreachClient)}账号`
-    }
     try {
       const response = await fetch('/api/runtime/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(outreachClient
-          ? { client: outreachClient, id }
-          : { client: 'qq', uin: String(id).replace(/^qq:/, ''), ...(refreshQr ? { refreshQr: true } : {}) }),
+        body: JSON.stringify({ client: 'qq', uin: String(id).replace(/^qq:/, ''), ...(refreshQr ? { refreshQr: true } : {}) }),
       })
       const body: unknown = await response.json().catch(() => ({}))
       if (version !== loginVersion) return
@@ -408,62 +323,6 @@ export const useShellStore = defineStore('shell', () => {
     } finally {
       if (version === loginVersion) accountAction.value = false
     }
-  }
-
-  async function saveBrowserPath(nextPath: string) {
-    const response = await fetch('/api/runtime/outreach/browser', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: nextPath }),
-    })
-    const body: unknown = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(messageFrom(body, `无法保存浏览器路径（HTTP ${response.status}）`))
-    applyRuntimeState(body)
-    return body
-  }
-
-  async function loginOutreachAccount(nextPath = browserPath.value, id: AccountId | '' = '') {
-    if (accountAction.value || runtimePhase.value === 'logging_in') return
-    const version = ++loginVersion
-    const target = id || (pendingAdd.value ? '' : activeAccountId.value || '')
-    const client = isBilibiliAccountId(target) || loginClient.value === 'bilibili'
-      ? 'bilibili'
-      : isXiaohongshuAccountId(target) || loginClient.value === 'xiaohongshu' ? 'xiaohongshu' : 'douyin'
-    const name = outreachClientName(client)
-    accountAction.value = true
-    loginClient.value = client
-    runtimePhase.value = 'logging_in'
-    runtimeMessage.value = `请在弹出的 Chrome 中登录${name}`
-    error.value = ''
-    try {
-      const response = await fetch('/api/runtime/outreach/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: target,
-          client,
-          browserPath: nextPath || browserPath.value,
-        }),
-      })
-      const body: unknown = await response.json().catch(() => ({}))
-      if (version !== loginVersion) return
-      if (!response.ok) throw new Error(messageFrom(body, `无法登录${name}（HTTP ${response.status}）`))
-      applyRuntimeState(body)
-    } catch (cause) {
-      if (version === loginVersion) {
-        error.value = cause instanceof Error ? cause.message : `无法登录${name}`
-        if (runtimePhase.value === 'logging_in') {
-          runtimePhase.value = 'browser_setup'
-          runtimeMessage.value = error.value
-        }
-      }
-    } finally {
-      if (version === loginVersion) accountAction.value = false
-    }
-  }
-
-  function setOutreachPipOpen(open: boolean) {
-    outreachPipOpen.value = open
   }
 
   async function refreshLoginQr() {
@@ -542,8 +401,6 @@ export const useShellStore = defineStore('shell', () => {
   return {
     activeAccountId, activeAccount, accounts, loading, adding, accountAction, cancelingLogin, removingAccountId, error,
     runtimePhase, runtimeMessage, pendingAdd, qrReady, qrVersion, clients,
-    loginClient, browserPath, browserDetected, outreachTask, outreachPipOpen,
     selectAccount, setAccountUnread, applyRuntimeState, refreshAccounts, refreshClients, addAccount, reloginAccount, refreshLoginQr, removeAccount, cancelLogin, cancelRefresh,
-    saveBrowserPath, loginOutreachAccount, setOutreachPipOpen,
   }
 })

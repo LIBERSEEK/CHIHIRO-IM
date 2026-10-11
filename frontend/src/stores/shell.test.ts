@@ -34,45 +34,8 @@ describe('runtime account shell', () => {
     expect(() => parseRuntimeAccounts({})).toThrow()
   })
 
-  it('accepts Douyin accounts without treating them as QQ OneBot identities', () => {
-    const dy = accountId('douyin:abc_1')
-    const parsed = parseRuntimeAccounts({
-      accounts: { activeId: dy, accounts: [
-        { id: a, nickname: 'QQ 号', online: true, obToken: 'secret' },
-        { id: dy, nickname: '创作者', platform: 'douyin', client: 'douyin', online: true, obToken: 'should-not-be-stored' },
-      ] },
-    })
-    expect(parsed.accounts[1]).toEqual({ id: dy, label: '创作者', platform: 'douyin', status: 'online' })
-    expect(parsed.activeId).toBe(dy)
-  })
 
-  it('keeps Douyin avatars served from the outreach runtime', () => {
-    const dy = accountId('douyin:abc_1')
-    const avatar = '/api/runtime/outreach/accounts/douyin%3Aabc_1/avatar?v=9'
-    const parsed = parseRuntimeAccounts({
-      accounts: { activeId: dy, accounts: [
-        { id: dy, nickname: '创作者', platform: 'douyin', online: true, avatar },
-      ] },
-    })
-    expect(parsed.accounts[0].avatar).toBe(avatar)
-  })
 
-  it('keeps a Douyin account label to the name and the public id', () => {
-    const dy = accountId('douyin:abc_1')
-    const parsed = parseRuntimeAccounts({
-      accounts: { activeId: dy, accounts: [
-        { id: dy, nickname: '自由探索LIBERSEEK关注30粉丝149获赞146抖音号：959855095', platform: 'douyin', online: true },
-      ] },
-    })
-    expect(parsed.accounts[0].label).toBe('自由探索LIBERSEEK')
-    expect(parsed.accounts[0].douyinId).toBe('959855095')
-    const explicit = parseRuntimeAccounts({
-      accounts: { activeId: dy, accounts: [
-        { id: dy, nickname: '创作者', douyinId: 'liber.seek', platform: 'douyin', online: true },
-      ] },
-    })
-    expect(explicit.accounts[0]).toMatchObject({ label: '创作者', douyinId: 'liber.seek' })
-  })
 
   it('loads server selection then preserves a local choice across refresh', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(state())))
@@ -280,56 +243,7 @@ describe('runtime account shell', () => {
     expect(shell.adding).toBe(false)
   })
 
-  it('starts Douyin as a browser-setup login instead of a QQ QR session', async () => {
-    const fetcher = vi.fn().mockResolvedValue(response({
-      ...state(null, []),
-      phase: 'browser_setup',
-      pendingAdd: true,
-      outreach: {
-        loginClient: 'douyin',
-        pendingAdd: true,
-        phase: 'browser_setup',
-        browserPath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        browserDetected: true,
-        task: { running: false },
-      },
-    }))
-    vi.stubGlobal('fetch', fetcher)
-    const shell = useShellStore()
-    const pending = shell.addAccount('douyin')
-    expect(shell.pendingAdd).toBe(true)
-    expect(shell.loginClient).toBe('douyin')
-    expect(shell.runtimePhase).toBe('browser_setup')
-    expect(shell.runtimeMessage).toBe('选择本机 Chrome，然后登录抖音账号')
-    await pending
-    expect(fetcher).toHaveBeenCalledWith('/api/runtime/start', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ client: 'douyin', mode: 'new' }),
-    }))
-    expect(shell.runtimePhase).toBe('browser_setup')
-    expect(shell.browserDetected).toBe(true)
-  })
 
-  it('opens outreach PiP when a Douyin task starts and tracks preview mode', async () => {
-    const dy = accountId('douyin:abc_1')
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
-      accounts: { activeId: dy, accounts: [{ id: dy, nickname: '创作者', platform: 'douyin', online: true }] },
-      outreach: {
-        loginClient: 'douyin',
-        task: { running: true, accountId: dy, status: 'running', logs: [], commented: 0, scanned: 0, id: 't1', startedAt: '2026-09-21T00:00:00.000Z' },
-        preview: { mode: 'pip', available: true, muted: true },
-      },
-    })))
-    const shell = useShellStore()
-    expect(shell.outreachPipOpen).toBe(false)
-    await shell.refreshAccounts()
-    expect(shell.outreachTask.running).toBe(true)
-    expect(shell.outreachPipOpen).toBe(true)
-    expect(shell.outreachTask.previewMode).toBe('pip')
-    expect(shell.outreachTask.previewAvailable).toBe(true)
-    expect(shell.outreachTask.previewMuted).toBe(true)
-    expect(shell.outreachTask.paused).toBe(false)
-  })
 
   it('enters a clean pending-new-account state before the start response returns', async () => {
     const start = deferred<Response>()
@@ -412,4 +326,19 @@ describe('runtime account shell', () => {
     expect(shell.adding).toBe(false)
     expect(shell.cancelingLogin).toBe(false)
   })
+})
+
+it('rejects removed client starts and excludes enabled legacy platforms', async () => {
+  const fetcher = vi.fn()
+  vi.stubGlobal('fetch', fetcher)
+  const shell = useShellStore()
+  for (const client of ['douyin', 'xiaohongshu', 'bilibili']) await shell.addAccount(client)
+  expect(fetcher).not.toHaveBeenCalled()
+  expect(shell.pendingAdd).toBe(false)
+  expect(parseRuntimeClients({ clients: [
+    { id: 'qq', name: 'QQ', enabled: true },
+    { id: 'douyin', name: '抖音', enabled: true },
+    { id: 'xiaohongshu', name: '小红书', enabled: true },
+    { id: 'bilibili', name: '哔哩哔哩', enabled: true },
+  ] }).map(client => client.id)).toEqual(['qq'])
 })

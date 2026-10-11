@@ -40,7 +40,6 @@ export const useWorkspace = defineStore('workspace', () => {
   const agentSessionId = ref<string | null>(null)
   const mobilePane = ref<'list' | 'chat'>('list')
   const drafts = ref<Record<string, string>>({})
-  const outreachChatRequest = ref(false)
 
   function selectList(tab: ListTab) {
     listTab.value = tab
@@ -71,6 +70,6 @@ export const useWorkspace = defineStore('workspace', () => {
     openAgentPane()
     mobilePane.value = 'chat'
   }
-  return { listTab, activePane, agentOpened, agentSessionId, mobilePane, drafts, outreachChatRequest,
+  return { listTab, activePane, agentOpened, agentSessionId, mobilePane, drafts,
     selectList, selectAgent, selectIm, closeAgent, openAgentPane, expandWorkbench }
 })

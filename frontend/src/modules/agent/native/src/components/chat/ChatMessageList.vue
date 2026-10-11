@@ -37,12 +37,11 @@
                 class="sent-attachment-card sent-image-card"
                 type="button"
                 @click="openImage(partUrl(part))"
-                @contextmenu.prevent.stop="emitLibraryMenu($event, part)"
               >
                 <img :src="partUrl(part)" :alt="part.filename || 'image'" />
               </button>
 
-              <div v-else class="sent-attachment-card sent-file-card" @contextmenu.prevent.stop="emitLibraryMenu($event, part)">
+              <div v-else class="sent-attachment-card sent-file-card">
                 <div
                   class="sent-attachment-icon"
                   :style="{
@@ -165,7 +164,7 @@
                       v-else-if="part.type === 'plain' && isUserMessage(msg)"
                       class="plain-content"
                     >
-                      {{ visibleCampaignText(part.text || "") }}
+                      {{ part.text || "" }}
                     </div>
 
                     <div
@@ -173,7 +172,7 @@
                       class="threaded-message-content"
                     >
                       <ThreadedMarkdownMessagePart
-                        :text="visibleCampaignText(part.text || '')"
+                        :text="part.text || ''"
                         :threads="messageThreads(msg)"
                         :refs="resolvedMessageRefs(msg)"
                         :is-dark="isDark"
@@ -185,7 +184,7 @@
 
                     <MarkdownMessagePart
                       v-else-if="part.type === 'plain'"
-                      :content="visibleCampaignText(part.text || '')"
+                      :content="part.text || ''"
                       :refs="resolvedMessageRefs(msg)"
                       :is-dark="isDark"
                       :custom-html-tags="customMarkdownTags"
@@ -197,7 +196,6 @@
                       class="image-part"
                       type="button"
                       @click="openImage(partUrl(part))"
-                      @contextmenu.prevent.stop="emitLibraryMenu($event, part)"
                     >
                       <img :src="partUrl(part)" :alt="part.filename || 'image'" />
                     </button>
@@ -214,13 +212,11 @@
                       class="video-part"
                       controls
                       :src="partUrl(part)"
-                      @contextmenu.prevent.stop="emitLibraryMenu($event, part)"
                     />
 
                     <div
                       v-else-if="part.type === 'file'"
                       class="file-part"
-                      @contextmenu.prevent.stop="emitLibraryMenu($event, part)"
                       :style="{
                         '--attachment-color': attachmentPresentation(part).color,
                       }"
@@ -260,12 +256,7 @@
                         v-for="tool in part.tool_calls || []"
                         :key="tool.id || tool.name"
                       >
-                        <SchemaCard
-                          v-if="parseChihiroCard(tool.result)"
-                          :card="parseChihiroCard(tool.result)!"
-                          :sources="chatImageSources(msgIndex)"
-                        />
-                        <ToolCallItem v-else-if="isIPythonToolCall(tool)" :is-dark="isDark">
+                        <ToolCallItem v-if="isIPythonToolCall(tool)" :is-dark="isDark">
                           <template #label>
                             <v-icon size="16">mdi-code-json</v-icon>
                             <span>{{ tool.name || "python" }}</span>
@@ -469,9 +460,6 @@ import type {
 } from "@/modules/agent/native/src/composables/useMessages";
 import { useI18n, useModuleI18n } from "@/modules/agent/native/src/i18n/composables";
 import { copyToClipboard } from "@/modules/agent/native/src/utils/clipboard";
-import { isCampaignSteerText, visibleCampaignText } from "@/modules/outreach/domain/campaign-plan";
-import SchemaCard from "@/modules/agent/SchemaCard.vue";
-import { parseChihiroCard } from "@/modules/agent/schema-card";
 
 const props = withDefaults(
   defineProps<{
@@ -518,7 +506,6 @@ const emit = defineEmits<{
   openThread: [thread: ChatThread];
   openReasoning: [payload: { message: ChatRecord; blockIndex: number }];
   openRefs: [refs: unknown];
-  libraryMenu: [payload: { x: number; y: number; name: string; url: string }];
 }>();
 
 registerChatMarkdownComponents();
@@ -570,7 +557,7 @@ function hasImageOnlyAttachments(message: ChatRecord) {
 
 function bubbleParts(message: ChatRecord) {
   if (!isUserMessage(message)) return displayMessageParts(messageContent(message));
-  return messageParts(message).filter((part) => !isAttachmentPart(part) && !isCampaignSteerText(part.text));
+  return messageParts(message).filter((part) => !isAttachmentPart(part));
 }
 
 function shouldShowMessageBubble(message: ChatRecord) {
@@ -675,34 +662,6 @@ function threadPreview(thread: ChatThread) {
   return truncate(thread.selected_text || tm("thread.title"), 48);
 }
 
-function emitLibraryMenu(event: MouseEvent, part: MessagePart) {
-  const url = partUrl(part);
-  if (!url) return;
-  emit("libraryMenu", {
-    x: event.clientX,
-    y: event.clientY,
-    name: attachmentName(part) || part.filename || "未命名",
-    url,
-  });
-}
-
-function chatImageSources(uptoIndex: number) {
-  const sources: { url: string; name: string }[] = [];
-  const seen = new Set<string>();
-  for (let index = 0; index <= uptoIndex && index < props.messages.length; index += 1) {
-    const message = props.messages[index];
-    if (!isUserMessage(message)) continue;
-    for (const part of messageParts(message)) {
-      if (part.type !== "image") continue;
-      const url = partUrl(part);
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
-      sources.push({ url, name: part.filename || "配图" });
-    }
-  }
-  return sources;
-}
-
 function partUrl(part: MessagePart) {
   if (part.embedded_url) return part.embedded_url;
   if (part.embedded_file?.url) return part.embedded_file.url;
@@ -718,8 +677,8 @@ function partUrl(part: MessagePart) {
 
 function plainTextFromMessage(message: ChatRecord) {
   return messageParts(message)
-    .filter((part) => part.type === "plain" && part.text && !isCampaignSteerText(part.text))
-    .map((part) => visibleCampaignText(part.text || ""))
+    .filter((part) => part.type === "plain" && part.text)
+    .map((part) => part.text || "")
     .join("\n");
 }
 

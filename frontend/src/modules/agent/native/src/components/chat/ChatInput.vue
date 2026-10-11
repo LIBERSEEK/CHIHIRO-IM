@@ -3,7 +3,6 @@
     class="input-area fade-in"
     :class="{ 'is-dark': isDark }"
   >
-    <CampaignComposer part="panel" @files="emit('fileSelect', $event)" />
     <div
       class="input-container"
       :class="{
@@ -46,9 +45,8 @@
         <div class="attachments-preview" v-if="hasStagedAttachments">
           <div
             v-for="(file, index) in imageCards"
-            :key="'img-' + (file.libraryId || file.signature || index)"
+            :key="'img-' + (file.signature || index)"
             class="attachment-card image-preview"
-            @contextmenu.prevent="openLibraryMenu($event, file)"
           >
             <img :src="file.url" class="preview-image" alt="attachment preview" />
             <v-btn
@@ -78,9 +76,8 @@
 
           <div
             v-for="(file, index) in stagedFiles"
-            :key="'file-' + (file.libraryId || file.signature || index)"
+            :key="'file-' + (file.signature || index)"
             class="attachment-card file-preview"
-            @contextmenu.prevent="openLibraryMenu($event, file)"
           >
             <div
               class="attachment-icon"
@@ -135,43 +132,13 @@
             <v-list-item
               class="styled-menu-item composer-plus-item"
               rounded="lg"
-              @click="campaign.requestComputerPick(); composerMenu = false"
+              @click="imageInputRef?.click(); composerMenu = false"
             >
               <template v-slot:prepend>
                 <v-icon icon="mdi-laptop" size="20"></v-icon>
               </template>
               <v-list-item-title>从电脑添加</v-list-item-title>
             </v-list-item>
-            <v-list-item
-              class="styled-menu-item composer-plus-item"
-              rounded="lg"
-              @click="campaign.openLibrary(); composerMenu = false"
-            >
-              <template v-slot:prepend>
-                <v-icon icon="mdi-folder-outline" size="20"></v-icon>
-              </template>
-              <v-list-item-title>从资料库添加</v-list-item-title>
-              <v-list-item-subtitle>留下的图片和视频，下次还能再选</v-list-item-subtitle>
-            </v-list-item>
-
-            <v-divider class="composer-plus-divider" />
-
-            <v-list-item
-              class="styled-menu-item composer-plus-item"
-              :class="{ 'styled-menu-item-active': skillOn }"
-              rounded="lg"
-              @click="sessionSkills.toggle(sessionId || ''); composerMenu = false"
-            >
-              <template v-slot:prepend>
-                <v-icon icon="mdi-comment-text-outline" size="20"></v-icon>
-              </template>
-              <v-list-item-title>营销获客</v-list-item-title>
-              <v-list-item-subtitle>进入正在发生的讨论，把价值交给正在问的人</v-list-item-subtitle>
-              <template v-if="skillOn" v-slot:append>
-                <v-icon icon="mdi-check" size="18" color="primary"></v-icon>
-              </template>
-            </v-list-item>
-
             <v-divider class="composer-plus-divider" />
 
             <ConfigSelector
@@ -207,10 +174,6 @@
               </template>
             </v-list-item>
           </StyledMenu>
-          <button v-if="skillOn" type="button" class="campaign-mode-chip">
-            营销获客
-            <span class="campaign-mode-close" role="button" aria-label="取消营销获客" @click="sessionSkills.toggle(sessionId || '')">×</span>
-          </button>
         </div>
         <div class="input-field-shell">
           <input
@@ -369,9 +332,6 @@ import ProviderModelMenu from "./ProviderModelMenu.vue";
 import StyledMenu from "@/modules/agent/native/src/components/shared/StyledMenu.vue";
 import CommandSuggestion from "./CommandSuggestion.vue";
 import { attachmentPresentation } from "./attachmentPresentation";
-import CampaignComposer from "@/modules/outreach/components/CampaignComposer.vue";
-import { useOutreachCampaignStore } from "@/modules/outreach/stores/campaign";
-import { sessionSkills } from "@/modules/agent/session-skills";
 import type { Session } from "@/modules/agent/native/src/composables/useSessions";
 import type { SuggestionCommand } from "./CommandSuggestion.vue";
 
@@ -383,7 +343,6 @@ interface StagedFileInfo {
   type: string;
   signature?: string;
   sourceFile?: File;
-  libraryId?: string;
 }
 
 interface ReplyInfo {
@@ -442,14 +401,11 @@ const emit = defineEmits<{
   stopRecording: [];
   pasteImage: [event: ClipboardEvent];
   fileSelect: [files: FileList | File[]];
-  libraryMenu: [payload: { x: number; y: number; name: string; url: string; libraryId?: string; file?: File; stagedKey: string }];
   clearReply: [];
   openLiveMode: [];
 }>();
 
 const { tm } = useModuleI18n("features/chat");
-const campaign = useOutreachCampaignStore();
-const skillOn = computed(() => sessionSkills.active(props.sessionId || ""));
 const composerMenu = ref(false);
 const isDark = computed(
   () => useCustomizerStore().uiTheme === "PurpleThemeDark",
@@ -632,18 +588,6 @@ const imageCards = computed((): StagedFileInfo[] => {
     signature: url,
   }));
 });
-
-function openLibraryMenu(event: MouseEvent, file: StagedFileInfo) {
-  emit("libraryMenu", {
-    x: event.clientX,
-    y: event.clientY,
-    name: file.original_name || file.filename || "未命名",
-    url: file.url,
-    libraryId: file.libraryId,
-    file: file.sourceFile,
-    stagedKey: file.signature || file.libraryId || file.url,
-  });
-}
 
 function filePresentation(file: StagedFileInfo) {
   return attachmentPresentation(file);
@@ -1201,15 +1145,6 @@ defineExpose({
   border-radius: 34px !important;
 }
 
-.input-container.has-attachments,
-.input-container.is-campaign {
-  justify-content: flex-start;
-  min-height: 130px;
-  padding: 14px 18px 10px !important;
-  border-radius: 30px !important;
-  overflow: visible;
-}
-
 .input-area.is-dark .input-container {
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
   background: #2d2d2d !important;
@@ -1230,60 +1165,6 @@ defineExpose({
   grid-template-areas: "left field right";
   align-items: center;
   column-gap: 10px;
-}
-
-.input-container.is-multiline .composer-row,
-.input-container.is-campaign .composer-row {
-  grid-template-areas:
-    "field field field"
-    "left . right";
-  row-gap: 10px;
-  align-items: end;
-}
-
-.input-container.is-campaign .composer-row {
-  align-items: center;
-}
-
-.input-container.is-campaign .input-field-shell,
-.input-container.is-campaign .chat-text-input,
-.input-container.is-campaign .chat-textarea {
-  min-height: 36px !important;
-}
-
-.campaign-mode-chip {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  height: 32px;
-  margin-left: 8px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-on-surface), 0.12);
-  color: inherit;
-  font-size: 13px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: default;
-}
-
-.campaign-mode-close {
-  display: none;
-  width: 16px;
-  height: 16px;
-  margin-left: 6px;
-  place-items: center;
-  border-radius: 50%;
-  color: rgba(var(--v-theme-on-surface), 0.72);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.campaign-mode-chip:hover .campaign-mode-close,
-.campaign-mode-chip:focus-within .campaign-mode-close {
-  display: grid;
 }
 
 .input-field-shell {
@@ -1689,24 +1570,6 @@ defineExpose({
     align-items: center;
   }
 
-  .input-container.is-multiline .composer-row,
-  .input-container.is-campaign .composer-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      "field field field"
-      "left . right";
-    min-height: auto;
-    row-gap: 4px;
-  }
-
-  .input-container.is-campaign .composer-row {
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
-  }
-
-  .input-container.is-campaign .input-left-actions {
-    min-width: max-content;
-  }
-
   .input-field-shell {
     min-height: 52px;
     align-items: center;
@@ -1821,37 +1684,6 @@ defineExpose({
   }
 }
 
-@media (max-width: 480px) {
-  .input-container.is-campaign {
-    min-width: 0 !important;
-    padding: 12px 10px 10px !important;
-    box-sizing: border-box !important;
-  }
-
-  .input-container.is-campaign .composer-row {
-    column-gap: 4px;
-    width: 100%;
-    min-width: 0;
-  }
-
-  .input-container.is-campaign .input-right-actions {
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .input-container.is-campaign .input-outline-control,
-  .input-container.is-campaign .input-icon-btn {
-    width: 32px !important;
-    height: 32px !important;
-    min-width: 32px !important;
-  }
-
-  .input-container.is-campaign .input-action-btn {
-    width: 34px !important;
-    height: 34px !important;
-    min-width: 34px !important;
-  }
-}
 </style>
 
 <style>

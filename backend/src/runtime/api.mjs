@@ -3,11 +3,6 @@ import path from 'node:path'
 import { CLIENTS, getClient } from './clients.mjs'
 import { createAccountStore } from './accounts.mjs'
 import { createQqRuntime } from './qq-napcat.mjs'
-import { createOutreachRuntime } from './outreach/service.mjs'
-import { isBilibiliAccountId, isDouyinAccountId, isOutreachAccountId, isXiaohongshuAccountId, pickOutreachAccount } from './outreach/accounts/ids.mjs'
-import { createLibrary } from './library.mjs'
-import { briefPrompt, createBriefStore, settingsFromBrief, stageCommentImages, stageInlineImages, turnBrief } from './outreach/campaign/brief.mjs'
-import { completeWithAstrbot } from './outreach/campaign/model.mjs'
 import { createAstrbotRuntime } from './astrbot.mjs'
 import { createBotController } from './bot.mjs'
 import { createBotSuggest } from './bot-suggest.mjs'
@@ -25,25 +20,13 @@ export function createRuntime({ root, cfg, services = {} }) {
   const managesLocalQq = !services.qq
   const managesLocalAstrbot = !services.astrbot
   const dataDir = path.join(root, 'data')
-  const store = createAccountStore(path.join(dataDir, 'accounts.json'))
+  const store = createAccountStore(path.join(dataDir, 'accounts.json'), { qqOnly: true })
   const qq = services.qq || createQqRuntime({
     store,
     logDir: path.join(dataDir, 'logs'),
     root
   })
   const astrbot = services.astrbot || createAstrbotRuntime({ root, cfg })
-  const library = services.library || createLibrary(path.join(dataDir, 'library'))
-  const briefs = services.briefs || createBriefStore(path.join(dataDir, 'outreach-briefs.json'))
-  const outreach = services.outreach || createOutreachRuntime({
-    root,
-    store,
-    emit: () => qq.touch?.(),
-    loginWaiter: services.outreachLoginWaiter,
-    feedRunner: services.outreachFeedRunner,
-    complete: (prompt, sessionId, options) => services.complete
-      ? services.complete(prompt, sessionId, options)
-      : completeWithAstrbot(astrbot, prompt, { sessionId, provider: options?.provider, model: options?.model }),
-  })
   const agent = createAgentController({ root, store, qq, astrbot, cfg })
   const customers = services.customers || createCustomerInsights({ root })
   const groupIntelligence = services.groupIntelligence || createGroupIntelligence({ root })
@@ -77,7 +60,11 @@ export function createRuntime({ root, cfg, services = {} }) {
   }
 
   async function snapshot() {
-    const snap = outreach.decorateSnapshot(qq.snapshot())
+    const snap = qq.snapshot()
+    if (snap.accounts) {
+      const accounts = (snap.accounts.accounts || []).filter(account => /^qq:\d+$/.test(account.id))
+      snap.accounts = { ...snap.accounts, accounts, activeId: accounts.some(account => account.id === snap.accounts.activeId) ? snap.accounts.activeId : accounts[0]?.id || null }
+    }
     snap.astrbot = await astrbot.refreshStatus()
     const wired = bot.wired
     for (const acc of snap.accounts?.accounts || []) {
@@ -141,11 +128,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     if (p === '/api/runtime/accounts/remove' && method === 'POST') {
       const body = await readJson(req)
       if (!body.id) return json(res, { error: 'missing_id' }, 400)
-      if (isOutreachAccountId(body.id)) {
-        await outreach.cleanup(body.id).catch((e) => logError('api', 'outreach.cleanup', e))
-        store.remove(body.id)
-        return json(res, await snapshot())
-      }
+      if (!store.list().accounts.some(account => account.id === body.id)) return json(res, { error: 'account_not_found' }, 404)
       await bot.unwireBeforeRemove(body.id).catch((e) => logError('api', 'unwire', e))
       const snap = await qq.removeAccount(body.id)
       snap.astrbot = await astrbot.refreshStatus()
@@ -293,6 +276,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     if (p === '/api/runtime/bot/enable' && method === 'POST') {
       const body = await readJson(req)
       if (!body.id) return json(res, { error: 'missing_id' }, 400)
+      if (!store.list().accounts.some(account => account.id === body.id)) return json(res, { error: 'account_not_found' }, 404)
       try {
         await bot.setEnabled(body.id, body.enabled !== false)
         return json(res, await snapshot())
@@ -389,11 +373,6 @@ export function createRuntime({ root, cfg, services = {} }) {
 
     if (p === '/api/runtime/login/cancel' && method === 'POST') {
       try {
-        const current = outreach.snapshotOutreach()
-        if (['douyin', 'xiaohongshu', 'bilibili'].includes(current.loginClient) && (current.pendingAdd || current.phase === 'logging_in' || current.phase === 'browser_setup')) {
-          await outreach.cancelLogin()
-          return json(res, await snapshot())
-        }
         const snap = await qq.cancelLogin()
         snap.astrbot = await astrbot.refreshStatus()
         return json(res, snap)
@@ -416,14 +395,6 @@ export function createRuntime({ root, cfg, services = {} }) {
         }, 501)
       }
       log('api', `start client=${clientId} mode=${body.mode || '-'} uin=${body.uin || '-'}`)
-      if (clientId === 'douyin' || clientId === 'xiaohongshu' || clientId === 'bilibili') {
-        const valid = clientId === 'xiaohongshu'
-          ? isXiaohongshuAccountId(body.id)
-          : clientId === 'bilibili' ? isBilibiliAccountId(body.id) : isDouyinAccountId(body.id)
-        const accountId = valid ? body.id : ''
-        outreach.prepareNew(accountId, clientId)
-        return json(res, await snapshot())
-      }
       if (managesLocalQq) await prepareEnvironment('qq')
       const snap = await qq.start({
         uin: body.uin,
@@ -432,296 +403,6 @@ export function createRuntime({ root, cfg, services = {} }) {
       })
       snap.astrbot = await astrbot.refreshStatus()
       return json(res, snap)
-    }
-
-    if (p === '/api/runtime/library' && method === 'GET') {
-      return json(res, { items: library.list() })
-    }
-
-    if (p === '/api/runtime/library' && method === 'POST') {
-      try {
-        return json(res, { item: library.add(await readJson(req)) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message }, 400)
-      }
-    }
-
-    const libraryFile = p.match(/^\/api\/runtime\/library\/([^/]+)\/file$/)
-    if (libraryFile && method === 'GET') {
-      const file = library.file(decodePathPart(libraryFile[1]))
-      if (!file) return json(res, { error: 'not_found' }, 404)
-      res.writeHead(200, { 'Content-Type': file.item.mime, 'Cache-Control': 'private, max-age=86400' })
-      res.end(fs.readFileSync(file.path))
-      return true
-    }
-
-    const libraryItem = p.match(/^\/api\/runtime\/library\/([^/]+)$/)
-    if (libraryItem && method === 'DELETE') {
-      library.remove(decodePathPart(libraryItem[1]))
-      return json(res, { items: library.list() })
-    }
-
-    if (p === '/api/runtime/outreach/brief' && method === 'GET') {
-      const id = String(url.searchParams.get('id') || '').trim()
-      if (id) {
-        const brief = briefs.get(id)
-        if (!brief) return json(res, { error: 'not_found', message: '没有这张任务卡' }, 404)
-        return json(res, { brief, items: library.list() })
-      }
-      return json(res, { brief: briefs.ensure(), items: library.list() })
-    }
-
-    if (p === '/api/runtime/outreach/brief' && method === 'POST') {
-      const body = await readJson(req)
-      return json(res, { brief: briefs.put(body.brief || body) })
-    }
-
-    if (p === '/api/runtime/outreach/brief/turn' && method === 'POST') {
-      try {
-        const body = await readJson(req)
-        const text = String(body.text || '').trim()
-        if (!text) return json(res, { error: '请先说说想投放的人群', message: '请先说说想投放的人群' }, 400)
-        const current = briefs.get(body.id) || briefs.ensure()
-        const draft = briefs.put({
-          ...current,
-          form: body.form === 'image' ? 'image' : (body.form === 'text' ? 'text' : current.form),
-          commentImageIds: Array.isArray(body.commentImageIds) ? body.commentImageIds : current.commentImageIds,
-          referenceIds: Array.isArray(body.referenceIds) ? body.referenceIds : current.referenceIds,
-        })
-        const names = [...draft.commentImageIds, ...draft.referenceIds]
-          .map((id) => library.file(id)?.item?.name)
-          .filter(Boolean)
-        const modelText = await completeWithAstrbot(astrbot, briefPrompt(draft, text, names), { sessionId: `outreach-brief:${draft.id}` })
-        return json(res, { brief: briefs.put(turnBrief(draft, text, modelText)) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/brief/start' && method === 'POST') {
-      try {
-        const body = await readJson(req)
-        const current = briefs.get(body.id) || briefs.ensure()
-        const savedBase = briefs.put({
-          ...current,
-          ...(body.form === 'image' || body.form === 'text' ? { form: body.form } : {}),
-          ...(typeof body.audience === 'string' ? { audience: body.audience } : {}),
-          ...(typeof body.offer === 'string' ? { offer: body.offer } : {}),
-          ...(typeof body.benefit === 'string' ? { benefit: body.benefit } : {}),
-          ...(typeof body.goal === 'string' ? { goal: body.goal } : {}),
-          ...(typeof body.tone === 'string' ? { tone: body.tone } : {}),
-          ...(Array.isArray(body.tags) ? { tags: body.tags } : {}),
-          ...(Array.isArray(body.excludes) ? { excludes: body.excludes } : {}),
-          ...(body.interaction === 'comment' || body.interaction === 'comment_like' ? { interaction: body.interaction } : {}),
-          ...(body.maxCount ? { maxCount: body.maxCount } : {}),
-          ...(Array.isArray(body.commentImageIds) ? { commentImageIds: body.commentImageIds } : {}),
-          ...(Array.isArray(body.referenceIds) ? { referenceIds: body.referenceIds } : {}),
-          ...(typeof body.commentProvider === 'string' ? { commentProvider: body.commentProvider } : {}),
-          ...(typeof body.commentModel === 'string' ? { commentModel: body.commentModel } : {}),
-          ...(body.platform === 'xiaohongshu' || body.platform === 'bilibili' || body.platform === 'douyin' ? { platform: body.platform } : {}),
-          excludesAsked: true,
-        })
-        const saved = savedBase
-        if (!saved.tags.length || !saved.tone || !saved.offer || !saved.benefit) {
-          return json(res, { error: '资料还没齐', message: '资料还没齐', brief: saved }, 400)
-        }
-        const preferred = pickOutreachAccount(
-          store.list().accounts || [],
-          saved.platform,
-          body.accountId || saved.accountId,
-          (id) => outreach.hasStorage(id),
-        )
-        if (!preferred || !outreach.hasStorage(preferred.id)) {
-          return json(res, { needsLogin: true, accountId: preferred?.id || '', brief: saved })
-        }
-        let imageDir = ''
-        const inlineImages = Array.isArray(body.commentImageFiles) ? body.commentImageFiles : []
-        if (saved.form === 'image' || inlineImages.length) {
-          imageDir = outreach.commentImageDirectory(preferred.id, saved.id)
-          const count = stageCommentImages(imageDir, saved.commentImageIds, (id) => library.file(id))
-            + stageInlineImages(imageDir, inlineImages)
-          if (!count) return json(res, { error: '请先选择评论配图', message: '请先选择评论配图', brief: saved }, 400)
-        }
-        await outreach.startTask(preferred.id, settingsFromBrief(saved, imageDir))
-        const started = briefs.put({ ...saved, status: 'started', accountId: preferred.id })
-        return json(res, { started: true, accountId: preferred.id, brief: started, ...(await snapshot()) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/browser' && method === 'POST') {
-      const body = await readJson(req)
-      try {
-        const detected = outreach.setBrowserPath(body.path || '')
-        return json(res, { ...detected, ...(await snapshot()) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/login' && method === 'POST') {
-      const body = await readJson(req)
-      try {
-        const browserPath = body.browserPath || body.path || ''
-        if (browserPath) outreach.setBrowserPath(browserPath)
-        const browser = outreach.browserState()
-        if (!browser.detected) {
-          return json(res, { error: 'chrome_not_found', message: `找不到 Chrome：${browser.path || '未设置路径'}`, ...(await snapshot()) }, 400)
-        }
-        outreach.login({
-          accountId: body.id || body.accountId || '',
-          browserPath,
-          client: body.client || '',
-        }).catch((e) => logError('api', 'outreach.login', e))
-        return json(res, await snapshot())
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    const outreachAvatarMatch = p.match(/^\/api\/runtime\/outreach\/accounts\/([^/]+)\/avatar$/)
-    if (outreachAvatarMatch && method === 'GET') {
-      const id = decodePathPart(outreachAvatarMatch[1])
-      const file = outreach.readAvatar(id)
-      if (!file) {
-        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: 'avatar_not_found' }))
-        return true
-      }
-      res.writeHead(200, {
-        'Content-Type': file.contentType || 'image/jpeg',
-        'Cache-Control': 'private, max-age=120',
-      })
-      res.end(file.body)
-      return true
-    }
-
-    const outreachImagesMatch = p.match(/^\/api\/runtime\/outreach\/accounts\/([^/]+)\/comment-images$/)
-    if (outreachImagesMatch && method === 'POST') {
-      const id = decodePathPart(outreachImagesMatch[1])
-      try {
-        const body = await readJson(req)
-        const saved = outreach.saveCommentImages(id, body.groupId || body.id, body.type, body.files)
-        return json(res, { ...saved, ...(await snapshot()) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    const outreachHistoryMatch = p.match(/^\/api\/runtime\/outreach\/accounts\/([^/]+)\/history(?:\/([^/]+))?$/)
-    if (outreachHistoryMatch && method === 'DELETE') {
-      const id = decodePathPart(outreachHistoryMatch[1])
-      const taskId = outreachHistoryMatch[2] ? decodePathPart(outreachHistoryMatch[2]) : ''
-      try {
-        const account = taskId
-          ? outreach.deleteTaskHistory(id, taskId)
-          : outreach.clearTaskHistory(id)
-        return json(res, { account, ...(await snapshot()) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    if (p.startsWith('/api/runtime/outreach/accounts/') && method === 'GET') {
-      const rest = p.slice('/api/runtime/outreach/accounts/'.length)
-      if (rest.includes('/')) return json(res, { error: 'account_not_found' }, 404)
-      const id = decodePathPart(rest)
-      const view = outreach.accountView(id)
-      if (!view) return json(res, { error: 'account_not_found' }, 404)
-      return json(res, view)
-    }
-
-    if (p.match(/^\/api\/runtime\/outreach\/accounts\/[^/]+\/settings$/) && method === 'POST') {
-      const id = decodePathPart(p.split('/')[5])
-      try {
-        const settings = outreach.writeSettings(id, await readJson(req))
-        return json(res, { settings, ...(await snapshot()) })
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/task/start' && method === 'POST') {
-      const body = await readJson(req)
-      try {
-        await outreach.startTask(body.accountId || body.id, body.settings || {})
-        return json(res, await snapshot())
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/task/stop' && method === 'POST') {
-      await outreach.stopTask()
-      return json(res, await snapshot())
-    }
-
-    if (p === '/api/runtime/outreach/task/pause' && method === 'POST') {
-      const body = await readJson(req)
-      try {
-        await outreach.setPaused(body.paused === true)
-        return json(res, await snapshot())
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/preview/mode' && method === 'POST') {
-      const body = await readJson(req)
-      try {
-        await outreach.setPreviewMode(body.mode)
-        return json(res, await snapshot())
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/preview/mute' && method === 'POST') {
-      const body = await readJson(req)
-      try {
-        await outreach.setPreviewMuted(body.muted !== false)
-        return json(res, await snapshot())
-      } catch (e) {
-        return json(res, { error: e.message, message: e.message, ...(await snapshot()) }, 400)
-      }
-    }
-
-    if (p === '/api/runtime/outreach/preview.jpg' && method === 'GET') {
-      const jpeg = outreach.previewFrame()
-      if (!jpeg) {
-        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify({ error: 'no_preview' }))
-        return true
-      }
-      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' })
-      res.end(Buffer.from(jpeg, 'base64'))
-      return true
-    }
-
-    if (p === '/api/runtime/outreach/preview/stream' && method === 'GET') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      })
-      const send = () => {
-        try {
-          const jpeg = outreach.previewFrame()
-          const preview = outreach.snapshotOutreach().preview || {}
-          res.write(`data: ${JSON.stringify({
-            jpeg,
-            mode: preview.mode || 'window',
-            available: Boolean(jpeg),
-            muted: preview.muted !== false,
-          })}\n\n`)
-        } catch { /* closed */ }
-      }
-      send()
-      const unsub = outreach.subscribePreview(send)
-      req.on('close', unsub)
-      return true
     }
 
     if (p === '/api/runtime/qq/qr' && method === 'GET') {
@@ -762,7 +443,6 @@ export function createRuntime({ root, cfg, services = {} }) {
       }
       send()
       const unsubQq = qq.subscribe(() => { send() })
-      const unsubOutreach = outreach.subscribe(() => { send() })
       const timer = setInterval(() => {
         qq.refreshPorts()
           .then(() => {
@@ -773,7 +453,6 @@ export function createRuntime({ root, cfg, services = {} }) {
       }, 1500)
       req.on('close', () => {
         unsubQq()
-        unsubOutreach()
         clearInterval(timer)
       })
       return true
@@ -787,7 +466,7 @@ export function createRuntime({ root, cfg, services = {} }) {
     await astrbot.stopIfOwned().catch((e) => logError('api', 'astrbot stop', e))
   }
 
-  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, outreach, environment, prepareEnvironment, snapshot, shutdown }
+  return { handle, qq, store, astrbot, bot, botSuggest, botAuto, agent, customers, groupIntelligence, environment, prepareEnvironment, snapshot, shutdown }
 }
 
 function json(res, obj, status = 200) {

@@ -105,25 +105,6 @@
           <span>{{ tm("actions.newChat") }}</span>
         </v-btn>
 
-        <button
-          v-if="isChihiroHosted && isSidebarCollapsed"
-          class="new-chat-btn icon-only chat-sidebar-rail-btn"
-          type="button"
-          title="资料库"
-          @click="campaign.openLibrary()"
-        >
-          <FolderOpen :size="18" class="sidebar-action-icon" />
-        </button>
-        <v-btn
-          v-else-if="isChihiroHosted"
-          class="new-chat-btn"
-          variant="text"
-          @click="campaign.openLibrary()"
-        >
-          <FolderOpen :size="18" class="sidebar-action-icon mr-2" />
-          <span>资料库</span>
-        </v-btn>
-
       </div>
 
       <div v-if="!isSidebarCollapsed" class="sidebar-content">
@@ -502,7 +483,7 @@
             :reply-to="chatInputReplyTarget"
             :send-shortcut="sendShortcut"
             :show-provider-selector="true"
-            :placeholder="sessionSkills.engaged(currSessionId || '') ? '说说你想投放的人群' : tm('input.projectPlaceholder')"
+            :placeholder="tm('input.projectPlaceholder')"
             @send="sendCurrentMessage"
             @stop="stopCurrentSession"
             @toggle-streaming="toggleStreaming"
@@ -513,7 +494,6 @@
             @stop-recording="stopRecording"
             @paste-image="handlePaste"
             @file-select="handleFilesSelected"
-            @library-menu="openLibraryMenu"
             @clear-reply="replyTarget = null"
           />
         </section>
@@ -566,7 +546,6 @@
               @open-thread="openThreadPanel"
               @open-reasoning="openReasoningPanel"
               @open-refs="openRefsSidebar"
-              @library-menu="openLibraryMenu"
             />
           </div>
         </section>
@@ -593,7 +572,7 @@
             :send-shortcut="sendShortcut"
             :show-provider-selector="true"
             :placeholder="
-              sessionSkills.engaged(currSessionId || '') ? '说说你想投放的人群' : (activeProject ? tm('input.projectPlaceholder') : undefined)
+              (activeProject ? tm('input.projectPlaceholder') : undefined)
             "
             @send="sendCurrentMessage"
             @stop="stopCurrentSession"
@@ -605,7 +584,6 @@
             @stop-recording="stopRecording"
             @paste-image="handlePaste"
             @file-select="handleFilesSelected"
-            @library-menu="openLibraryMenu"
             @clear-reply="replyTarget = null"
           />
         </section>
@@ -689,17 +667,6 @@
       :project-title="activeProject?.title || ''"
       @update:model-value="chatHeader.SET_WORKSPACE_FILES_OPEN"
     />
-    <LibraryDialog @pick="stageLibraryItem" @unpick="unstageLibrary" />
-    <div
-      v-if="libraryMenu"
-      ref="libraryMenuEl"
-      class="library-context-menu"
-      :style="{ left: `${libraryMenu.x}px`, top: `${libraryMenu.y}px` }"
-    >
-      <button type="button" :disabled="Boolean(libraryMenu.libraryId)" @click="confirmAddToLibrary">
-        {{ libraryMenu.libraryId ? '已在资料库' : '添加到资料库' }}
-      </button>
-    </div>
   </div>
 </template>
 
@@ -727,7 +694,6 @@ import {
   ChevronRight,
   EllipsisVertical,
   Languages,
-  FolderOpen,
   PanelLeft,
   Pin,
   Settings,
@@ -781,9 +747,6 @@ import {
 import { useToast } from "@/modules/agent/native/src/utils/toast";
 import UserChatHeader from "./UserChatHeader.vue";
 import { hostedAgentIdFromLocation, useAgentNavigation } from "@/modules/agent/native/src/navigation";
-import LibraryDialog from "@/modules/outreach/components/LibraryDialog.vue";
-import { useOutreachCampaignStore, type LibraryItem } from "@/modules/outreach/stores/campaign";
-import { sessionSkills } from "@/modules/agent/session-skills";
 
 export type UserChatProps = {
   chatboxMode?: boolean;
@@ -800,7 +763,6 @@ const props = withDefaults(defineProps<UserChatProps>(), {
 });
 
 const workspace = useWorkspace();
-const campaign = useOutreachCampaignStore();
 const route = useRoute();
 const navigation = useAgentNavigation({ chatboxMode: props.chatboxMode });
 const isChihiroHosted = computed(() => props.chihiroHosted === true);
@@ -846,8 +808,6 @@ const {
   stagedNonImageFiles,
   processAndUploadImage,
   processAndUploadFile,
-  stageExternal,
-  unstageLibrary,
   handlePaste,
   removeImage,
   removeAudio,
@@ -945,7 +905,6 @@ const stagedBySession = new Map<string, typeof stagedFiles.value>();
 let adoptEmptyComposer = false;
 watch(currSessionId, (next, prev) => {
   if (prev === undefined) {
-    campaign.showSession(next || "");
     return;
   }
   const from = prev || "";
@@ -953,16 +912,12 @@ watch(currSessionId, (next, prev) => {
   replyTarget.value = null;
   if (adoptEmptyComposer && !prev && next) {
     adoptEmptyComposer = false;
-    campaign.rekey("", next);
-    sessionSkills.rekey("", next);
     stagedBySession.set(next, stagedFiles.value.slice());
     stagedBySession.delete("");
-    campaign.showSession(next);
     return;
   }
   adoptEmptyComposer = false;
   stagedBySession.set(from, stagedFiles.value.slice());
-  campaign.showSession(to);
   replaceStaged((stagedBySession.get(to) || []).slice());
 }, { immediate: true });
 const threadPanelOpen = ref(false);
@@ -1244,13 +1199,6 @@ watch(
 );
 
 onMounted(async () => {
-  document.addEventListener("pointerdown", onLibraryPointerDown);
-  if (props.chihiroHosted) {
-    await campaign.load();
-    restoreLibraryPreviews();
-  }
-  composerSyncReady = true;
-  syncStagedToCampaign();
   if (typeof ResizeObserver !== "undefined") {
     composerResizeObserver = new ResizeObserver(([entry]) => {
       const container = messagesContainer.value;
@@ -1279,15 +1227,9 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onLibraryPointerDown);
   composerResizeObserver?.disconnect();
   chatHeader.CLEAR_CONTEXT();
   cleanupMediaCache();
-});
-
-watch(stagedFiles, () => syncStagedToCampaign(), { deep: true });
-watch(() => campaign.active, (active) => {
-  if (active) syncStagedToCampaign();
 });
 
 watch(composerShell, (element, previousElement) => {
@@ -1700,7 +1642,6 @@ async function sendCurrentMessage() {
       // 关联项目后再刷新，否则新会话会短暂出现在"对话"列表
       await getSessions();
     }
-    sessionSkills.rekey("", sessionId);
 
     await ensureOutgoingAttachments();
     const messageId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -1730,7 +1671,6 @@ async function sendCurrentMessage() {
       selectedModel: selection?.modelName || "",
       userRecord,
       botRecord,
-      skillPrompt: sessionSkills.prompt(sessionId),
     });
   } catch (error) {
     console.error("Failed to send message:", error);
@@ -1742,7 +1682,7 @@ async function sendCurrentMessage() {
 
 async function ensureOutgoingAttachments() {
   for (const file of stagedFiles.value) {
-    if (file.attachment_id && !file.attachment_id.startsWith("library:")) continue;
+    if (file.attachment_id) continue;
     const blob = file.sourceFile || await fetch(file.url).then((response) => response.ok ? response.blob() : null).catch(() => null);
     if (!blob) continue;
     const formData = new FormData();
@@ -1773,7 +1713,7 @@ function buildOutgoingParts(text: string): MessagePart[] {
     parts.push({ type: "plain", text });
   }
   stagedFiles.value.forEach((file) => {
-    if (!file.attachment_id || file.attachment_id.startsWith("library:")) return;
+    if (!file.attachment_id) return;
     parts.push({
       type: file.type,
       attachment_id: file.attachment_id,
@@ -2032,93 +1972,6 @@ function removeThreadFromMessages(threadId: string) {
       (thread) => thread.thread_id !== threadId,
     );
   }
-}
-
-const libraryMenu = ref<null | {
-  x: number;
-  y: number;
-  name: string;
-  url: string;
-  libraryId?: string;
-  file?: File;
-  stagedKey?: string;
-}>(null);
-const libraryMenuEl = ref<HTMLElement | null>(null);
-let composerSyncReady = false;
-
-function openLibraryMenu(payload: {
-  x: number;
-  y: number;
-  name: string;
-  url: string;
-  libraryId?: string;
-  file?: File;
-  stagedKey?: string;
-}) {
-  libraryMenu.value = {
-    ...payload,
-    x: Math.max(8, Math.min(payload.x, window.innerWidth - 160)),
-    y: Math.max(8, Math.min(payload.y, window.innerHeight - 52)),
-  };
-}
-
-function onLibraryPointerDown(event: PointerEvent) {
-  const target = event.target as Node | null;
-  if (!libraryMenu.value || !libraryMenuEl.value || !target) return;
-  if (!libraryMenuEl.value.contains(target)) libraryMenu.value = null;
-}
-
-async function confirmAddToLibrary() {
-  const menu = libraryMenu.value;
-  libraryMenu.value = null;
-  if (!menu || menu.libraryId) return;
-  try {
-    const blob = menu.file || await (await fetch(menu.url)).blob();
-    const item = await campaign.addBlobToLibrary(blob, menu.name);
-    if (!item) {
-      toast.error(campaign.error || "没有放进资料库");
-      return;
-    }
-    if (menu.stagedKey) {
-      const staged = stagedFiles.value.find((file) => (file.signature || file.libraryId || file.url) === menu.stagedKey);
-      if (staged) staged.libraryId = item.id;
-      syncStagedToCampaign();
-    }
-    toast.success("已加入资料库");
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : "没有放进资料库");
-  }
-}
-
-function stageLibraryItem(item: LibraryItem) {
-  stageExternal({
-    url: campaign.fileUrl(item.id),
-    name: item.name,
-    type: item.kind === "video" ? "video" : "image",
-    libraryId: item.id,
-  });
-}
-
-function restoreLibraryPreviews() {
-  const brief = campaign.brief;
-  if (!brief) return;
-  for (const id of [...brief.commentImageIds, ...brief.referenceIds]) {
-    const item = campaign.items.find((entry) => entry.id === id);
-    if (item) stageLibraryItem(item);
-  }
-}
-
-function syncStagedToCampaign() {
-  if (!composerSyncReady || !campaign.active) return;
-  if (campaign.sessionId && campaign.sessionId !== currSessionId.value) return;
-  campaign.syncComposerFiles(stagedFiles.value.map((file) => ({
-    key: file.signature || file.libraryId || file.url,
-    name: file.original_name || file.filename,
-    mime: file.sourceFile?.type || "",
-    kind: file.type === "image" ? "image" as const : file.type === "video" ? "video" as const : "file" as const,
-    libraryId: file.libraryId,
-    file: file.sourceFile,
-  })));
 }
 
 async function handleFilesSelected(files: FileList | File[]) {
@@ -2465,37 +2318,7 @@ async function stopCurrentSession() {
   background: var(--chat-session-active-bg);
 }
 
-.library-context-menu {
-  position: fixed;
-  z-index: 4000;
-  min-width: 140px;
-  padding: 6px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-  border-radius: 12px;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 86%, rgb(var(--v-theme-on-surface)) 14%);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
-}
 
-.library-context-menu button {
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.library-context-menu button:hover:not(:disabled) {
-  background: rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.library-context-menu button:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
 
 .sidebar-workspace-btn--active {
   background: var(--chat-session-active-bg);

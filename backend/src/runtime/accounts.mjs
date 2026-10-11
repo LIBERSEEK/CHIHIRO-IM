@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-export function createAccountStore(filePath) {
+export function createAccountStore(filePath, { qqOnly = false } = {}) {
   function load() {
     try {
       return JSON.parse(fs.readFileSync(filePath, 'utf8'))
@@ -16,7 +16,10 @@ export function createAccountStore(filePath) {
   }
 
   function list() {
-    return load()
+    const data = load()
+    if (!qqOnly) return data
+    const accounts = data.accounts.filter(account => /^qq:\d+$/.test(account.id))
+    return { ...data, accounts, activeId: accounts.some(account => account.id === data.activeId) ? data.activeId : accounts[0]?.id || null }
   }
 
   function upsert(account, { activate = true } = {}) {
@@ -37,6 +40,7 @@ export function createAccountStore(filePath) {
   }
 
   function setActive(id) {
+    if (qqOnly && !/^qq:\d+$/.test(id)) throw new Error('account_not_found')
     const data = load()
     if (!data.accounts.some((a) => a.id === id)) {
       throw new Error('account_not_found')

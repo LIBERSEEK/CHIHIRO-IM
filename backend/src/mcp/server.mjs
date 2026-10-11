@@ -6,10 +6,7 @@
  * Claude Desktop / Codex extra:
  *   { "mcpServers": { "chihiro": { "command": "node", "args": ["/abs/path/backend/src/mcp/server.mjs"] } } }
  *
- * The workbench campaign agent uses outreach-server.mjs so it does not receive QQ tools.
- * Both entries answer newline JSON-RPC and Content-Length.
  */
-import { callOutreachTool, outreachToolDefinitions, outreachToolName } from './outreach-card.mjs'
 import { createMcpHandler, serveMcp } from './stdio.mjs'
 import { createWorkbenchApi } from './workbench-api.mjs'
 
@@ -88,7 +85,6 @@ const tools = [
       required: ['action']
     }
   },
-  ...outreachToolDefinitions(),
 ]
 
 async function callTool(name, args = {}) {
@@ -125,7 +121,6 @@ async function callTool(name, args = {}) {
       throw new Error('unknown_gate_action')
     }
     default:
-      if (outreachToolName(name)) return callOutreachTool(name, args, api)
       throw new Error(`unknown tool ${name}`)
   }
 }
@@ -137,8 +132,7 @@ serveMcp(createMcpHandler({
     'Use observe kind=session|messages with peerId+type to read live QQ chat history (bridged). ' +
     'Do not invent accountId/peerId/userId/groupId. contact may run without asking and may be repeated for multiple observed targets; the server spaces real submits by 6–10s per account. ' +
     'send follows Chihiro gate mode (ask/auto/always). Ask before gate.approve. ' +
-    'Image generation is your job; send.image only delivers a file you already have. ' +
-    'Douyin comment campaigns use outreach_schema, outreach_draft and outreach_get. Those tools never start a task.',
+    'Image generation is your job; send.image only delivers a file you already have.',
   tools,
   callTool,
 }))

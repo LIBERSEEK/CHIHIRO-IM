@@ -7,7 +7,7 @@ it('filters ChatBot Chat API sessions out of the workbench list', () => {
   expect(isChatBotSession({ session_id: 'web:abc', creator: 'chihiro-suggest:qq:1' })).toBe(true)
   expect(isChatBotSession({ session_id: 'web:abc', creator: 'operator' })).toBe(false)
   expect(isChatBotSession('outreach-campaign:brief1')).toBe(false)
-  expect(isChatBotSession('outreach-campaign:brief1:7689303818681880241')).toBe(true)
+  expect(isChatBotSession('outreach-campaign:brief1:7689303818681880241')).toBe(false)
   expect(withoutChatBotSessions([
     { session_id: 'web:keep', creator: 'me' },
     { session_id: 'suggest:qq:1:private:2:m', creator: 'chihiro-suggest:qq:1' },

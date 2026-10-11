@@ -6,9 +6,6 @@ import { SlidersHorizontal, Settings } from '@lucide/vue'
 import AccountProfilePop from '@/app/AccountProfilePop.vue'
 import AccountPlatformBadge from '@/app/AccountPlatformBadge.vue'
 import ExternalSettingsDialog from '@/app/ExternalSettingsDialog.vue'
-import OutreachSettingsDialog from '@/app/OutreachSettingsDialog.vue'
-import OutreachPip from '@/modules/outreach/components/OutreachPip.vue'
-import OutreachLoginPanel from '@/modules/outreach/components/OutreachLoginPanel.vue'
 import { useAssistantStore } from '@/modules/assistant/session'
 import { useSuggestStore } from '@/modules/assistant/suggest'
 import { useShellStore } from '@/stores/shell'
@@ -22,7 +19,6 @@ import {
   accountTitle,
   accountUnreadLabel,
   canCloseExitDialog,
-  canOpenOutreachSettings,
   canOpenNapCatSettings,
   clampAccountMenuPosition,
   shouldCloseExitDialogForKey,
@@ -39,7 +35,6 @@ const route = useRoute()
 const router = useRouter()
 const settingsOpen = ref(false)
 const externalSettings = ref<{ title: string; src: string } | null>(null)
-const outreachSettings = ref<{ title: string } | null>(null)
 const accountMenu = ref<{ account: AccountContext; x: number; y: number } | null>(null)
 const accountProfile = ref<{ account: AccountContext; anchor: DOMRect } | null>(null)
 const exitAccount = ref<AccountContext | null>(null)
@@ -60,7 +55,6 @@ const shellView = computed(() => resolveShellViewState({
   qrReady: shell.qrReady,
   cancelingLogin: shell.cancelingLogin,
   activeAccount: shell.activeAccount,
-  loginClient: shell.loginClient,
 }))
 const showRuntimeBootLoading = computed(() => shellView.value.showRuntimeBootLoading)
 const loginInProgress = computed(() => shellView.value.loginInProgress)
@@ -79,7 +73,6 @@ const selectedClient = computed(() => shell.clients.find(client => client.id ===
   ?? shell.clients.find(client => client.enabled)
   ?? shell.clients[0])
 const qrSrc = computed(() => `/api/runtime/qq/qr?v=${shell.qrVersion || Date.now()}`)
-const loginKind = computed(() => shellView.value.loginKind)
 function applyTheme(mode: ThemeMode) {
   themeMode.value = applyShellTheme(mode).mode
 }
@@ -128,13 +121,6 @@ function relogin(account: AccountContext, refreshQr = false) {
   closeAccountMenu()
   void shell.reloginAccount(account.id, refreshQr)
 }
-async function loginDouyin(path = '') {
-  try {
-    await shell.loginOutreachAccount(path || shell.browserPath)
-  } catch (cause) {
-    shell.error = cause instanceof Error ? cause.message : '无法登录抖音'
-  }
-}
 function askExit(account: AccountContext) {
   closeAccountMenu()
   closeAccountProfile()
@@ -169,12 +155,6 @@ function openAccountNapCatSettings(account: AccountContext) {
   settingsOpen.value = false
   externalSettings.value = { title: `NapCat 设置 · ${account.label}`, src: '/webui' }
 }
-function openAccountOutreachSettings(account: AccountContext) {
-  shell.selectAccount(account.id)
-  closeAccountMenu()
-  settingsOpen.value = false
-  outreachSettings.value = { title: `全局设置 · ${account.label}` }
-}
 function closeMenus(event: MouseEvent) {
   if (suppressDocumentClose) return
   const target = event.target as Element
@@ -187,10 +167,6 @@ function closeMenus(event: MouseEvent) {
   }
 }
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape' && outreachSettings.value) {
-    outreachSettings.value = null
-    return
-  }
   if (event.key === 'Escape' && accountProfile.value) closeAccountProfile()
   if (shouldCloseExitDialogForKey(event.key, Boolean(exitAccount.value), exitBusy.value)) closeExitDialog()
   if (shouldCloseImSettingsForKey(event.key, route.name, route.query.settings)) {
@@ -209,7 +185,6 @@ async function startSelectedClient() {
   if (!client?.enabled || shell.adding) return
   closeAddLauncher()
   void router.push('/im')
-  if (client.id === 'qq' && loginKind.value !== 'qq' && loginInProgress.value) await shell.cancelLogin()
   await shell.addAccount(client.id)
 }
 function openAddLauncher() {
@@ -221,7 +196,7 @@ function openAddLauncher() {
 }
 function openAddLauncherEvent(event: Event) {
   const detail = (event as CustomEvent<{ client?: unknown }>).detail
-  const preferredClient = detail && ['qq', 'douyin', 'xiaohongshu', 'bilibili'].includes(String(detail.client))
+  const preferredClient = detail && ['qq'].includes(String(detail.client))
     ? String(detail.client)
     : null
   if (preferredClient) selectedClientId.value = preferredClient
@@ -349,19 +324,8 @@ onUnmounted(() => {
       </div>
       <RouterView v-else />
     </main>
-    <section v-if="showLoginPanel" class="login-panel" :class="{ 'login-panel-fill': loginKind !== 'qq' }" :aria-label="loginKind === 'xiaohongshu' ? '小红书登录' : loginKind === 'bilibili' ? '哔哩哔哩登录' : loginKind === 'douyin' ? '抖音登录' : 'QQ 登录'">
-      <OutreachLoginPanel
-        v-if="loginKind !== 'qq'"
-        :product="loginKind === 'xiaohongshu' ? '小红书自动评论' : loginKind === 'bilibili' ? '哔哩哔哩评论获客' : '抖音自动营销与引流工具'"
-        :busy="shell.runtimePhase === 'logging_in'"
-        :canceling="shell.cancelingLogin"
-        :message="loginMessage"
-        :can-exit="Boolean(shell.activeAccount)"
-        @login="loginDouyin"
-        @cancel="shell.cancelLogin"
-        @exit="shell.activeAccount && askExit(shell.activeAccount)"
-      />
-      <div v-else class="login-card">
+    <section v-if="showLoginPanel" class="login-panel" aria-label="QQ 登录">
+      <div class="login-card">
         <h1>{{ shell.pendingAdd ? '登录新账号' : shell.activeAccount?.status === 'online' ? 'QQ 登录' : '账号未连接' }}</h1>
         <p class="login-brand">千寻IM - 千人千面, 千域千寻</p>
         <img v-if="shell.qrReady" class="login-qr" :src="qrSrc" alt="QQ 登录二维码" />
@@ -377,7 +341,6 @@ onUnmounted(() => {
     </section>
     <div v-if="accountMenu" class="account-context-menu" :style="{ left: `${accountMenu.x}px`, top: `${accountMenu.y}px` }" @click.stop>
       <button v-if="canOpenNapCatSettings(accountMenu.account)" type="button" @click="openAccountNapCatSettings(accountMenu.account)"><SlidersHorizontal :size="16" />NapCat 设置</button>
-      <button v-if="canOpenOutreachSettings(accountMenu.account)" type="button" @click="openAccountOutreachSettings(accountMenu.account)"><Settings :size="16" />全局设置</button>
       <button type="button" @click="relogin(accountMenu.account)">{{ accountMenu.account.status === 'online' ? '重新登录' : '登录账号' }}</button>
       <button type="button" class="danger" @click="askExit(accountMenu.account)">退出账号</button>
     </div>
@@ -400,12 +363,6 @@ onUnmounted(() => {
       :src="externalSettings?.src ?? ''"
       @close="externalSettings = null"
     />
-    <OutreachSettingsDialog
-      :open="outreachSettings !== null"
-      :title="outreachSettings?.title ?? ''"
-      @close="outreachSettings = null"
-    />
-    <OutreachPip />
     <p v-if="shell.error" class="shell-error" role="alert">{{ shell.error }} <button type="button" @click="shell.refreshAccounts">重试</button></p>
   </div>
 </template>

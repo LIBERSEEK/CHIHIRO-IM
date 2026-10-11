@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-const outreachServer = fileURLToPath(new URL('../src/mcp/outreach-server.mjs', import.meta.url))
 const qqServer = fileURLToPath(new URL('../src/mcp/server.mjs', import.meta.url))
 
 function spawnServer(script) {
@@ -93,38 +92,7 @@ async function stop(child) {
   })
 }
 
-test('outreach server answers newline JSON-RPC with only the three outreach tools', async () => {
-  const child = spawnServer(outreachServer)
-  const read = lineReader(child.stdout)
-  try {
-    child.stdin.write(`${JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '0' } },
-    })}\n`)
-    const init = JSON.parse(await read())
-    assert.equal(init.result.protocolVersion, '2025-11-25')
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
-    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })}\n`)
-    const listed = JSON.parse(await read())
-    assert.deepEqual(listed.result.tools.map((tool) => tool.name), ['outreach_schema', 'outreach_draft', 'outreach_get'])
-    child.stdin.write(`${JSON.stringify({
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
-      params: { name: 'outreach_schema', arguments: {} },
-    })}\n`)
-    const called = JSON.parse(await read())
-    const payload = JSON.parse(called.result.content[0].text)
-    assert.equal(payload.kind, 'chihiro.card')
-    assert.equal(payload.schema.fields.some((field) => field.key === 'audience'), true)
-  } finally {
-    await stop(child)
-  }
-})
-
-test('qq server still answers Content-Length and lists underscore outreach tools', async () => {
+test('QQ server answers Content-Length with only QQ tools', async () => {
   const child = spawnServer(qqServer)
   const read = contentReader(child.stdout)
   try {
@@ -136,11 +104,11 @@ test('qq server still answers Content-Length and lists underscore outreach tools
     }))
     const init = JSON.parse(await read())
     assert.equal(init.result.protocolVersion, '2024-11-05')
-    assert.match(init.result.instructions, /outreach_schema/)
+    assert.doesNotMatch(init.result.instructions, /outreach/)
     child.stdin.write(frame({ jsonrpc: '2.0', id: 2, method: 'tools/list' }))
     const names = JSON.parse(await read()).result.tools.map((tool) => tool.name)
     assert.equal(names.includes('observe'), true)
-    assert.equal(names.includes('outreach_schema'), true)
+    assert.deepEqual(names, ['observe', 'send', 'contact', 'gate'])
     assert.equal(names.includes('outreach.schema'), false)
     assert.equal(names.includes('outreach_start'), false)
   } finally {

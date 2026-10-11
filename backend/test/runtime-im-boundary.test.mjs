@@ -201,3 +201,43 @@ test('invalid QQ recent snapshots report failure instead of an empty successful 
   assert.equal(response.status, 400)
   assert.equal((await response.json()).error, 'invalid_recent_contacts_response')
 })
+
+test('removed platforms and comment acquisition cannot be started through runtime APIs', async (t) => {
+  const f = await fixture(t)
+  const request = (route, body) => fetch(`${f.base}/api/runtime/${route}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const clients = await (await fetch(`${f.base}/api/runtime/clients`)).json()
+  assert.deepEqual(clients.clients.filter(client => client.enabled).map(client => client.id), ['qq'])
+  for (const client of ['douyin', 'xiaohongshu', 'bilibili']) {
+    assert.equal(clients.clients.some(item => item.id === client), false)
+    const response = await request('start', { client })
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).error, 'unknown_client')
+  }
+  for (const route of ['outreach/login', 'outreach/brief/start', 'outreach/task/start']) {
+    assert.equal((await request(route, { accountId: 'douyin:legacy' })).status, 404)
+  }
+  assert.equal((await fetch(`${f.base}/api/runtime/outreach/preview.jpg`)).status, 404)
+
+  // Existing unsupported data stays on disk, while public lists expose QQ only.
+  f.runtime.store.upsert({ id: 'douyin:legacy', client: 'douyin', nickname: 'Legacy account' })
+  assert.equal(f.runtime.store.load().activeId, 'douyin:legacy')
+  assert.equal(f.runtime.store.load().accounts.length, 3)
+  const publicAccounts = await (await fetch(`${f.base}/api/runtime/accounts`)).json()
+  assert.deepEqual(publicAccounts.accounts.map(account => account.id), ['qq:100', 'qq:200'])
+  assert.equal(publicAccounts.activeId, 'qq:100')
+  f.runtime.qq.snapshot = () => ({ accounts: f.runtime.store.load(), phase: 'idle' })
+  const state = await (await fetch(`${f.base}/api/runtime/state`)).json()
+  assert.equal('outreach' in state, false)
+  assert.deepEqual(state.accounts.accounts.map(account => account.id), ['qq:100', 'qq:200'])
+  assert.equal(state.accounts.activeId, 'qq:100')
+  assert.equal((await request('accounts/active', { id: 'douyin:legacy' })).status, 400)
+  assert.equal((await request('accounts/remove', { id: 'douyin:legacy' })).status, 404)
+  assert.equal(f.runtime.store.load().accounts.length, 3)
+
+  let qqStarts = 0
+  f.runtime.qq.start = async () => { qqStarts += 1; return f.runtime.qq.snapshot() }
+  assert.equal((await request('start', { client: 'qq', mode: 'new' })).status, 200)
+  assert.equal(qqStarts, 1)
+})

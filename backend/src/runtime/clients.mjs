@@ -1,4 +1,4 @@
-/** Client types shown in the add-account dropdown. QQ and Douyin are live. */
+/** Client types shown in the add-account dropdown. QQ is live. */
 
 export const CLIENTS = [
   {
@@ -8,30 +8,6 @@ export const CLIENTS = [
     enabled: true,
     login: 'qr',
     hint: '使用 QQ 副本登录，可多号同时在线，不占用你自己打开的原生 QQ'
-  },
-  {
-    id: 'douyin',
-    name: '抖音',
-    badge: '抖',
-    enabled: true,
-    login: 'browser',
-    hint: '选择本机 Chrome，登录后在工作台浏览推荐流并评论'
-  },
-  {
-    id: 'xiaohongshu',
-    name: '小红书',
-    badge: '红',
-    enabled: true,
-    login: 'browser',
-    hint: '选择本机 Chrome，登录后按任务卡上的标签搜索笔记并评论'
-  },
-  {
-    id: 'bilibili',
-    name: '哔哩哔哩',
-    badge: 'B',
-    enabled: true,
-    login: 'browser',
-    hint: '选择本机 Chrome，登录后按任务卡上的关键词搜索视频并评论'
   },
   { id: 'telegram', name: 'Telegram', badge: 'TG', enabled: false, login: 'token' },
   { id: 'lark', name: '飞书', badge: '飞', enabled: false, login: 'oauth' },

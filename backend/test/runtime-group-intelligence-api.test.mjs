@@ -62,3 +62,28 @@ test('runtime report creation requires an explicit account', async (t) => {
   assert.equal(response.status, 400)
   assert.equal((await response.json()).error, 'missing_account')
 })
+
+test('runtime reports expose filter decisions and accept validated group policies', async (t) => {
+  const base = await fixture(t)
+  const message = { accountId: 'qq:100', groupId: '300', conversationId: 'qq:100:group:300', messageAt: 1000 }
+  for (const [messageId, text] of [['1', '收到'], ['2', '这个能私有化部署吗？'], ['3', '预算三万']]) {
+    const response = await jsonRequest(`${base}/api/runtime/group-intelligence/messages/ingest`, 'POST', 'qq:100', { ...message, messageId, text })
+    assert.equal(response.status, 200)
+  }
+  const response = await jsonRequest(`${base}/api/runtime/group-intelligence/reports`, 'POST', 'qq:100', { title: '分析' })
+  const report = await response.json()
+  assert.equal(report.filter.options.profile, 'analysis')
+  assert.equal(report.filter.stats.sourceCount, 3)
+  assert.equal(report.filter.stats.analysisCount, 2)
+  assert.equal(report.sources[0].filter.label, 'chatter')
+  assert.equal(report.sources.length, 3)
+  const detail = await fetch(`${base}/api/runtime/group-intelligence/reports/${report.id}`, { headers: { 'x-chihiro-account': 'qq:100' } })
+  assert.deepEqual(await detail.json(), report)
+  const notice = await jsonRequest(`${base}/api/runtime/group-intelligence/reports`, 'POST', 'qq:100', {
+    title: '关注预算', filter: { profile: 'notice', groupPolicies: { 300: { keywords: ['预算'] } } },
+  })
+  assert.deepEqual((await notice.json()).analysisSources.map(item => item.messageId), ['3'])
+  const invalid = await jsonRequest(`${base}/api/runtime/group-intelligence/reports`, 'POST', 'qq:100', { title: '无效策略', filter: { profile: 'bad' } })
+  assert.equal(invalid.status, 400)
+  assert.equal((await invalid.json()).error, 'invalid_filter_profile')
+})
